@@ -6,6 +6,7 @@ import { useState, useEffect } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { getBaseUrl } from "@/lib/constants"
+import { TerminalInput } from "@/components/terminal-input"
 
 export default function LoginPage() {
   const [isLogin, setIsLogin] = useState(true)
@@ -237,11 +238,10 @@ export default function LoginPage() {
                 {!isLogin && (
                   <div>
                     <label className="block text-xs sm:text-sm mb-1">{">"} USERNAME:</label>
-                    <input
+                    <TerminalInput
                       type="text"
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
-                      className="w-full bg-black border border-green-400 text-green-400 font-mono p-2 focus:border-green-300 focus:outline-none text-sm"
                       placeholder="Enter username..."
                       required={!isLogin}
                     />
@@ -250,11 +250,10 @@ export default function LoginPage() {
 
                 <div>
                   <label className="block text-xs sm:text-sm mb-1">{">"} EMAIL:</label>
-                  <input
+                  <TerminalInput
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="w-full bg-black border border-green-400 text-green-400 font-mono p-2 focus:border-green-300 focus:outline-none text-sm"
                     placeholder="Enter email..."
                     required
                   />
@@ -262,11 +261,10 @@ export default function LoginPage() {
 
                 <div>
                   <label className="block text-xs sm:text-sm mb-1">{">"} PASSWORD:</label>
-                  <input
+                  <TerminalInput
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full bg-black border border-green-400 text-green-400 font-mono p-2 focus:border-green-300 focus:outline-none text-sm"
                     placeholder="Enter password..."
                     required
                   />

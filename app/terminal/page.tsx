@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client"
 import { generateSecureInviteCode, generateEncryptionKey } from "@/lib/encryption"
 import { getBaseUrl } from "@/lib/constants"
 import type { Database } from "@/lib/supabase/types"
+import { TerminalInput } from "@/components/terminal-input"
 
 type Chat = Database["public"]["Tables"]["chats"]["Row"] & {
   participants_count?: number
@@ -277,12 +278,11 @@ export default function TerminalPage() {
               <div className="bg-gray-900 border border-green-400 p-3 sm:p-4 mb-4 text-green-400">
                 <div className="space-y-3">
                   <p className="text-xs sm:text-sm">{">"} CREATE NEW CHAT:</p>
-                  <input
+                  <TerminalInput
                     type="text"
                     value={newChatName}
                     onChange={(e) => setNewChatName(e.target.value)}
                     placeholder="Enter chat name..."
-                    className="w-full bg-black border border-green-400 text-green-400 font-mono p-2 focus:border-green-300 focus:outline-none text-sm"
                   />
                   <div className="flex flex-col sm:flex-row gap-2">
                     <button
@@ -307,12 +307,11 @@ export default function TerminalPage() {
               <div className="bg-gray-900 border border-green-400 p-3 sm:p-4 mb-4 text-green-400">
                 <div className="space-y-3">
                   <p className="text-xs sm:text-sm">{">"} JOIN CHAT BY CODE:</p>
-                  <input
+                  <TerminalInput
                     type="text"
                     value={joinCode}
                     onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
                     placeholder="Enter chat code (e.g., ABC-DEF-GHI-JKL)..."
-                    className="w-full bg-black border border-green-400 text-green-400 font-mono p-2 focus:border-green-300 focus:outline-none text-sm"
                   />
                   <div className="flex flex-col sm:flex-row gap-2">
                     <button

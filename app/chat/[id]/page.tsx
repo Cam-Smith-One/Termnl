@@ -7,6 +7,7 @@ import { useRouter, useParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { encryptMessage, decryptMessage } from "@/lib/encryption"
 import type { Database } from "@/lib/supabase/types"
+import { TerminalInput } from "@/components/terminal-input"
 
 type Message = Database["public"]["Tables"]["messages"]["Row"] & {
   profiles: {
@@ -314,12 +315,12 @@ export default function ChatPage() {
             <div className="flex items-center gap-2 sm:gap-4">
               {isRenaming && isOwner ? (
                 <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
-                  <input
+                  <TerminalInput
                     type="text"
                     value={newChatName}
                     onChange={(e) => setNewChatName(e.target.value)}
                     placeholder="New chat name..."
-                    className="bg-black border border-green-400 text-green-400 font-mono text-sm w-full sm:w-48 p-1"
+                    className="w-full sm:w-48 p-1"
                   />
                   <div className="flex gap-2">
                     <button
@@ -410,13 +411,13 @@ export default function ChatPage() {
 
             {/* Message Input */}
             <div className="flex flex-col sm:flex-row gap-2">
-              <input
+              <TerminalInput
                 type="text"
                 value={newMessage}
                 onChange={(e) => setNewMessage(e.target.value)}
                 onKeyPress={handleKeyPress}
                 placeholder="Type your message..."
-                className="flex-1 bg-black border border-green-400 text-green-400 font-mono p-2 focus:border-green-300 focus:outline-none text-sm"
+                className="flex-1 p-2"
               />
               <div className="flex gap-2">
                 <button

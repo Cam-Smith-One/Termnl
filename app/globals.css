@@ -58,10 +58,23 @@
   }
 }
 
-/* Terminal-specific styles */
-.terminal-cursor::after {
-  content: "█";
-  animation: blink 1s infinite;
+/* Terminal cursor block animation */
+@keyframes terminal-cursor-blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  51%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Terminal cursor block styling */
+.terminal-cursor-block {
+  animation: terminal-cursor-blink 1s infinite;
+  background-color: #00ff00;
+  color: #000000;
 }
 
 /* Custom scrollbar for terminal */
