@@ -108,7 +108,7 @@ export default function JoinChatPage() {
                   </p>
                   <p className="text-xs sm:text-sm mt-2">{">"} Please wait...</p>
                 </div>
-                <div className="animate-pulse">█</div>
+                <div className="terminal-cursor-block">█</div>
               </>
             )}
           </div>

@@ -58,7 +58,7 @@
   }
 }
 
-/* Terminal cursor block animation */
+/* Terminal cursor block animation - CONSISTENT GREEN BLINKING */
 @keyframes terminal-cursor-blink {
   0%,
   50% {
@@ -70,7 +70,7 @@
   }
 }
 
-/* Terminal cursor block styling - GREEN CURSOR */
+/* Terminal cursor block styling - CONSISTENT GREEN CURSOR */
 .terminal-cursor-block {
   animation: terminal-cursor-blink 1s infinite;
   color: #00ff00 !important;
@@ -83,6 +83,7 @@
   font-family: "Courier New", monospace;
   font-size: 14px;
   font-weight: normal;
+  vertical-align: baseline;
 }
 
 /* Override any conflicting styles */
@@ -179,4 +180,22 @@ span.terminal-cursor-block {
     line-height: 1.1;
     letter-spacing: -0.5px;
   }
+}
+
+/* Consistent button styling across all pages */
+button {
+  font-family: "Courier New", monospace !important;
+}
+
+/* Ensure consistent terminal styling */
+.terminal-window {
+  background: #000;
+  color: #00ff00;
+  font-family: "Courier New", monospace;
+  border: 1px solid #00ff00;
+}
+
+/* Loading states consistency */
+.loading-cursor {
+  animation: terminal-cursor-blink 1s infinite;
 }

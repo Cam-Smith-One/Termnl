@@ -20,6 +20,7 @@ export default function LoginPage() {
   const [success, setSuccess] = useState("")
   const [showForm, setShowForm] = useState(false)
   const [checkingAuth, setCheckingAuth] = useState(true)
+  const [needsVerification, setNeedsVerification] = useState(false)
   const router = useRouter()
   const searchParams = useSearchParams()
   const supabase = createClient()
@@ -38,7 +39,7 @@ export default function LoginPage() {
         setShowForm(true)
       },
       systemLines.length * 500 + 2000,
-    ) // Adjust timing based on animation
+    )
 
     return () => clearTimeout(timer)
   }, [isLogin])
@@ -46,18 +47,35 @@ export default function LoginPage() {
   useEffect(() => {
     // Check for URL parameters (errors or success messages)
     const urlError = searchParams.get("error")
+    const urlMessage = searchParams.get("message")
     const verified = searchParams.get("verified")
 
-    if (urlError) {
+    if (urlError && urlMessage) {
+      setError(urlMessage)
+      if (urlError.includes("verification") || urlError.includes("expired")) {
+        setNeedsVerification(true)
+      }
+    } else if (urlError) {
       switch (urlError) {
         case "verification_expired":
           setError("Email verification link has expired. Please request a new one.")
+          setNeedsVerification(true)
+          break
+        case "verification_invalid":
+          setError("Email verification link is invalid. Please request a new one.")
+          setNeedsVerification(true)
           break
         case "verification_failed":
           setError("Email verification failed. Please try again.")
+          setNeedsVerification(true)
           break
         case "verification_error":
           setError("An error occurred during verification. Please try again.")
+          setNeedsVerification(true)
+          break
+        case "email_not_verified":
+          setError("Please verify your email before logging in.")
+          setNeedsVerification(true)
           break
         default:
           setError("An error occurred. Please try again.")
@@ -68,6 +86,11 @@ export default function LoginPage() {
       setSuccess("Email verified successfully! You can now log in.")
     }
 
+    // Clear URL parameters after processing
+    if (urlError || urlMessage || verified) {
+      window.history.replaceState({}, "", "/")
+    }
+
     // Check if user is already logged in
     const checkUser = async () => {
       try {
@@ -76,8 +99,6 @@ export default function LoginPage() {
           error: sessionError,
         } = await supabase.auth.getSession()
 
-        console.log("Session check:", { session, error: sessionError })
-
         if (sessionError) {
           console.error("Session error:", sessionError)
           setCheckingAuth(false)
@@ -85,26 +106,20 @@ export default function LoginPage() {
         }
 
         if (session?.user) {
-          console.log("User found:", session.user)
-          console.log("Email confirmed:", session.user.email_confirmed_at)
-
           if (session.user.email_confirmed_at) {
-            console.log("Redirecting to terminal...")
             router.push("/terminal")
             return
           } else {
             setError("Please verify your email before logging in")
+            setNeedsVerification(true)
+            setEmail(session.user.email || "")
           }
         }
 
         setCheckingAuth(false)
       } catch (err) {
         console.error("Auth check error:", err)
-        if (err instanceof Error) {
-          setError(`Session check failed: ${err.message}`)
-        } else {
-          setError("Failed to check authentication status")
-        }
+        setError("Failed to check authentication status")
         setCheckingAuth(false)
       }
     }
@@ -115,14 +130,15 @@ export default function LoginPage() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log("Auth state change:", event, session)
-
       if (event === "SIGNED_IN" && session?.user?.email_confirmed_at) {
-        console.log("User signed in, redirecting to terminal...")
         router.push("/terminal")
+      } else if (event === "SIGNED_IN" && session?.user && !session.user.email_confirmed_at) {
+        setError("Please verify your email before logging in")
+        setNeedsVerification(true)
+        setEmail(session.user.email || "")
       } else if (event === "SIGNED_OUT") {
-        console.log("User signed out")
         setCheckingAuth(false)
+        setNeedsVerification(false)
       }
     })
 
@@ -136,32 +152,26 @@ export default function LoginPage() {
     setLoading(true)
     setError("")
     setSuccess("")
+    setNeedsVerification(false)
 
     try {
       if (isLogin) {
-        console.log("Attempting login for:", email)
-        // Login flow
         const { data, error } = await supabase.auth.signInWithPassword({
           email,
           password,
         })
 
-        console.log("Login result:", { data, error })
-
         if (error) {
-          console.error("Login error:", error)
           setError(error.message)
         } else if (data.user) {
-          console.log("Login successful:", data.user)
           if (data.user.email_confirmed_at) {
-            console.log("Email confirmed, should redirect...")
             // The onAuthStateChange listener will handle the redirect
           } else {
             setError("Please verify your email before logging in")
+            setNeedsVerification(true)
           }
         }
       } else {
-        // Registration flow
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
@@ -180,12 +190,7 @@ export default function LoginPage() {
         }
       }
     } catch (err) {
-      console.error("Submit error:", err)
-      if (err instanceof Error) {
-        setError(`Authentication error: ${err.message}`)
-      } else {
-        setError("An unexpected error occurred during authentication")
-      }
+      setError("An unexpected error occurred during authentication")
     } finally {
       setLoading(false)
     }
@@ -198,6 +203,8 @@ export default function LoginPage() {
     }
 
     setLoading(true)
+    setError("")
+
     try {
       const { error } = await supabase.auth.resend({
         type: "signup",
@@ -208,9 +215,15 @@ export default function LoginPage() {
       })
 
       if (error) {
-        setError(error.message)
+        if (error.message.includes("User not found") || error.message.includes("not found")) {
+          setError("Account not found. Please register again or check your email address.")
+        } else {
+          setError(`Failed to resend verification: ${error.message}`)
+        }
       } else {
-        setSuccess("Verification email sent! Please check your inbox.")
+        setSuccess(
+          "New verification email sent! Please check your inbox and spam folder. The new link should work properly.",
+        )
       }
     } catch (err) {
       setError("Failed to resend verification email")
@@ -222,9 +235,9 @@ export default function LoginPage() {
   // Show loading while checking authentication
   if (checkingAuth) {
     return (
-      <div className="min-h-screen bg-black text-green-400 font-mono flex items-center justify-center">
+      <div className="min-h-screen bg-black text-green-400 font-mono flex items-center justify-center p-2 sm:p-4">
         <div className="text-center">
-          <p>{">"} CHECKING AUTHENTICATION...</p>
+          <p className="text-xs sm:text-sm">{">"} CHECKING AUTHENTICATION...</p>
           <div className="terminal-cursor-block animate-pulse mt-2">█</div>
         </div>
       </div>
@@ -268,14 +281,17 @@ export default function LoginPage() {
                 <p>
                   {">"} ERROR: {error}
                 </p>
-                {error.includes("verify your email") && (
-                  <button
-                    onClick={resendVerification}
-                    disabled={loading}
-                    className="mt-2 bg-black border border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-2 py-1 text-xs disabled:opacity-50"
-                  >
-                    [RESEND VERIFICATION]
-                  </button>
+                {needsVerification && (
+                  <div className="mt-3 space-y-2">
+                    <p className="text-yellow-400">{">"} Click below to get a fresh verification link:</p>
+                    <button
+                      onClick={resendVerification}
+                      disabled={loading}
+                      className="bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-3 py-1 text-xs disabled:opacity-50 transition-colors uppercase tracking-wider"
+                    >
+                      [GET NEW VERIFICATION LINK]
+                    </button>
+                  </div>
                 )}
               </div>
             )}
@@ -285,6 +301,8 @@ export default function LoginPage() {
                 <p>
                   {">"} SUCCESS: {success}
                 </p>
+                <p className="text-yellow-400 mt-2">{">"} Check your spam folder if you don't see the email</p>
+                <p className="text-yellow-400 mt-1">{">"} Click the link quickly after receiving it</p>
               </div>
             )}
 
@@ -294,14 +312,15 @@ export default function LoginPage() {
                   <p className="text-green-400">{">"} REGISTRATION SUCCESSFUL!</p>
                   <p className="text-green-400 mt-2">{">"} We have sent you an email verification link.</p>
                   <p className="text-green-400">
-                    {">"} Please check your inbox and click the link to verify your account.
+                    {">"} Please check your inbox and spam folder and click the link to verify your account.
                   </p>
                   <p className="text-green-600 mt-3 break-all">
                     {">"} Email sent to: {email}
                   </p>
                   <p className="text-yellow-400 mt-3 text-xs">
-                    {">"} The verification link will redirect you back to TERMNL.APP
+                    {">"} IMPORTANT: Click the verification link within 1 hour
                   </p>
+                  <p className="text-yellow-400 text-xs">{">"} The link will redirect you back to TERMNL.APP</p>
                 </div>
                 <div className="flex flex-col sm:flex-row gap-2">
                   <button
@@ -382,7 +401,7 @@ export default function LoginPage() {
               </form>
             ) : (
               <div className="text-center py-8">
-                <div className="terminal-cursor-block animate-pulse">█</div>
+                <div className="terminal-cursor-block">█</div>
               </div>
             )}
 
@@ -391,6 +410,7 @@ export default function LoginPage() {
               <p>{">"} PROTOCOL: ASCII-CHAT-85</p>
               <p>{">"} ENCRYPTION: AES-256 End-to-End</p>
               <p>{">"} DOMAIN: TERMNL.APP - SSL Secured</p>
+              <p>{">"} TIP: Click verification links quickly (they expire in 1 hour)</p>
             </div>
           </div>
         </div>

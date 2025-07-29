@@ -43,8 +43,6 @@ export default function TerminalPage() {
           error: sessionError,
         } = await supabase.auth.getSession()
 
-        console.log("Terminal page - session check:", { session, error: sessionError })
-
         if (sessionError) {
           console.error("Terminal page - session error:", sessionError)
           router.push("/")
@@ -52,18 +50,15 @@ export default function TerminalPage() {
         }
 
         if (!session?.user) {
-          console.log("Terminal page - no user, redirecting to login")
           router.push("/")
           return
         }
 
         if (!session.user.email_confirmed_at) {
-          console.log("Terminal page - email not confirmed, redirecting to login")
           router.push("/?error=email_not_verified")
           return
         }
 
-        console.log("Terminal page - user authenticated:", session.user.email)
         setUser(session.user)
         await loadChats(session.user.id)
         setLoading(false)
@@ -143,6 +138,7 @@ export default function TerminalPage() {
       await loadChats(user.id)
       setNewChatName("")
       setShowCreateChat(false)
+      setSuccess(`Chat "${newChatName}.chat" created successfully!`)
     } catch (err) {
       setError("Failed to create chat")
     }
@@ -172,7 +168,7 @@ export default function TerminalPage() {
         .eq("user_id", user.id)
         .single()
 
-      if (existing) {
+      if (existing || chat.owner_id === user.id) {
         setError("You are already in this chat")
         return
       }
@@ -188,6 +184,7 @@ export default function TerminalPage() {
       await loadChats(user.id)
       setJoinCode("")
       setShowJoinChat(false)
+      setSuccess(`Successfully joined "${chat.name}"!`)
     } catch (err) {
       setError("Failed to join chat")
     }
@@ -204,10 +201,10 @@ export default function TerminalPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-black text-green-400 font-mono flex items-center justify-center">
+      <div className="min-h-screen bg-black text-green-400 font-mono flex items-center justify-center p-2 sm:p-4">
         <div className="text-center">
-          <p>{">"} LOADING TERMINAL...</p>
-          <div className="terminal-cursor-block animate-pulse mt-2">█</div>
+          <p className="text-xs sm:text-sm">{">"} LOADING TERMINAL...</p>
+          <div className="terminal-cursor-block mt-2">█</div>
         </div>
       </div>
     )
@@ -261,7 +258,7 @@ export default function TerminalPage() {
                 </p>
                 <button
                   onClick={() => setSuccess("")}
-                  className="mt-2 bg-black border border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-2 py-1 text-xs"
+                  className="mt-2 bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-2 py-1 text-xs transition-colors uppercase tracking-wider"
                 >
                   [DISMISS]
                 </button>
@@ -275,7 +272,7 @@ export default function TerminalPage() {
                 </p>
                 <button
                   onClick={() => setError("")}
-                  className="mt-2 bg-black border border-red-400 text-red-400 hover:bg-red-400 hover:text-black font-mono px-2 py-1 text-xs"
+                  className="mt-2 bg-black border-2 border-red-400 text-red-400 hover:bg-red-400 hover:text-black font-mono px-2 py-1 text-xs transition-colors uppercase tracking-wider"
                 >
                   [DISMISS]
                 </button>
@@ -374,7 +371,8 @@ export default function TerminalPage() {
                     {/* Chat Files */}
                     {chats.length === 0 ? (
                       <div className="col-span-12 text-center py-4 text-green-600 text-xs sm:text-sm">
-                        No chat rooms found. Create or join one to get started.
+                        <p>No chat rooms found. Create or join one to get started.</p>
+                        <div className="terminal-cursor-block mt-2 mx-auto">█</div>
                       </div>
                     ) : (
                       chats.map((chat) => (
