@@ -70,11 +70,25 @@
   }
 }
 
-/* Terminal cursor block styling */
+/* Terminal cursor block styling - GREEN CURSOR */
 .terminal-cursor-block {
   animation: terminal-cursor-blink 1s infinite;
-  background-color: #00ff00;
-  color: #000000;
+  color: #00ff00 !important;
+  background-color: #00ff00 !important;
+  display: inline-block;
+  width: 8px;
+  height: 14px;
+  line-height: 14px;
+  text-align: center;
+  font-family: "Courier New", monospace;
+  font-size: 14px;
+  font-weight: normal;
+}
+
+/* Override any conflicting styles */
+span.terminal-cursor-block {
+  color: #00ff00 !important;
+  background-color: #00ff00 !important;
 }
 
 /* Custom scrollbar for terminal */

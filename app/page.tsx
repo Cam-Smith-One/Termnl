@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { getBaseUrl } from "@/lib/constants"
 import { TerminalInput } from "@/components/terminal-input"
+import { TerminalTypewriter } from "@/components/terminal-typewriter"
 
 export default function LoginPage() {
   const [isLogin, setIsLogin] = useState(true)
@@ -17,9 +18,29 @@ export default function LoginPage() {
   const [showVerification, setShowVerification] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
+  const [showForm, setShowForm] = useState(false)
   const router = useRouter()
   const searchParams = useSearchParams()
   const supabase = createClient()
+
+  const systemLines = [
+    "> SYSTEM: Terminal Chat Network Online",
+    "> STATUS: Ready for authentication",
+    "> DOMAIN: TERMNL.APP - Secure Connection Established",
+    `> Please ${isLogin ? "login" : "register"} to continue...`,
+  ]
+
+  useEffect(() => {
+    // Show form after typewriter animation completes
+    const timer = setTimeout(
+      () => {
+        setShowForm(true)
+      },
+      systemLines.length * 500 + 2000,
+    ) // Adjust timing based on animation
+
+    return () => clearTimeout(timer)
+  }, [isLogin])
 
   useEffect(() => {
     // Check for URL parameters (errors or success messages)
@@ -162,14 +183,8 @@ export default function LoginPage() {
 `}
             </pre>
 
-            <div className="text-xs sm:text-sm mb-4">
-              <p>{">"} SYSTEM: Terminal Chat Network Online</p>
-              <p>{">"} STATUS: Ready for authentication</p>
-              <p>{">"} DOMAIN: TERMNL.APP - Secure Connection Established</p>
-              <p>
-                {">"} Please {isLogin ? "login" : "register"} to continue...
-              </p>
-            </div>
+            {/* Animated System Messages */}
+            <TerminalTypewriter lines={systemLines} speed={30} delay={300} className="mb-4" />
 
             {error && (
               <div className="text-red-400 text-xs sm:text-sm p-2 sm:p-3 border border-red-400 bg-gray-900">
@@ -233,7 +248,7 @@ export default function LoginPage() {
                   </button>
                 </div>
               </div>
-            ) : (
+            ) : showForm ? (
               <form onSubmit={handleSubmit} className="space-y-4">
                 {!isLogin && (
                   <div>
@@ -288,6 +303,10 @@ export default function LoginPage() {
                   </button>
                 </div>
               </form>
+            ) : (
+              <div className="text-center py-8">
+                <div className="terminal-cursor-block animate-pulse">█</div>
+              </div>
             )}
 
             <div className="text-[10px] sm:text-xs text-green-600 mt-4 sm:mt-6">

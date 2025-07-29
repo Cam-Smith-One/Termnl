@@ -106,7 +106,7 @@ export const TerminalInput = forwardRef<HTMLInputElement, TerminalInputProps>(({
             ref.current = node
           }
         }}
-        className={`w-full bg-black border border-green-400 text-green-400 font-mono focus:border-green-300 focus:outline-none ${className}`}
+        className={`w-full bg-black border border-green-400 text-green-400 font-mono focus:border-green-300 focus:outline-none p-2 ${className}`}
         style={{
           caretColor: "transparent",
           position: "relative",
@@ -121,18 +121,19 @@ export const TerminalInput = forwardRef<HTMLInputElement, TerminalInputProps>(({
             left: `${8 + cursorPosition}px`, // 8px for input padding
             top: "50%",
             transform: "translateY(-50%)",
-            zIndex: 0,
+            zIndex: 2,
           }}
         >
           <span
-            className="text-green-400 font-mono terminal-cursor-block"
+            className="terminal-cursor-block"
             style={{
-              fontSize: "14px",
-              lineHeight: "1",
-              fontFamily: "Courier New, monospace",
+              color: "#00ff00",
+              backgroundColor: "#00ff00",
               display: "inline-block",
               width: "8px",
-              textAlign: "center",
+              height: "14px",
+              fontFamily: "Courier New, monospace",
+              fontSize: "14px",
             }}
           >
             █
