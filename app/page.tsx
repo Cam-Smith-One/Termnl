@@ -106,7 +106,23 @@ export default function LoginPage() {
         }
 
         if (session?.user) {
-          if (session.user.email_confirmed_at) {
+          console.log("User session data:", {
+            email: session.user.email,
+            email_confirmed_at: session.user.email_confirmed_at,
+            user_metadata: session.user.user_metadata,
+            app_metadata: session.user.app_metadata,
+            confirmed_at: session.user.confirmed_at,
+            email_verified: session.user.user_metadata?.email_verified,
+          })
+
+          // Check multiple possible verification indicators
+          const isEmailVerified =
+            session.user.email_confirmed_at ||
+            session.user.confirmed_at ||
+            session.user.user_metadata?.email_verified === true ||
+            session.user.app_metadata?.email_verified === true
+
+          if (isEmailVerified) {
             router.push("/terminal")
             return
           } else {

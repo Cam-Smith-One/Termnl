@@ -78,7 +78,13 @@ export async function GET(request: NextRequest) {
         return NextResponse.redirect(redirectUrl)
       }
 
-      if (data?.user?.email_confirmed_at) {
+      const isEmailVerified =
+        data?.user?.email_confirmed_at ||
+        data?.user?.confirmed_at ||
+        data?.user?.user_metadata?.email_verified === true ||
+        data?.user?.app_metadata?.email_verified === true
+
+      if (isEmailVerified) {
         // Successful verification - redirect to terminal
         console.log("Email verified successfully, redirecting to terminal")
         const redirectUrl = new URL("/terminal", requestUrl.origin)
@@ -86,7 +92,12 @@ export async function GET(request: NextRequest) {
         return NextResponse.redirect(redirectUrl)
       } else {
         // User exists but email not confirmed
-        console.log("User exists but email not confirmed")
+        console.log("User exists but email not confirmed", {
+          email_confirmed_at: data?.user?.email_confirmed_at,
+          confirmed_at: data?.user?.confirmed_at,
+          user_metadata: data?.user?.user_metadata,
+          app_metadata: data?.user?.app_metadata,
+        })
         const redirectUrl = new URL("/", requestUrl.origin)
         redirectUrl.searchParams.set("error", "email_not_verified")
         redirectUrl.searchParams.set("message", "Email verification is still pending. Please check your email again.")

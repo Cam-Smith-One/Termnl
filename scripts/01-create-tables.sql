@@ -2,7 +2,7 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- Users table (extends Supabase auth.users)
-CREATE TABLE public.profiles (
+CREATE TABLE IF NOT EXISTS public.profiles (
     id UUID REFERENCES auth.users(id) ON DELETE CASCADE PRIMARY KEY,
     username TEXT UNIQUE NOT NULL,
     email TEXT NOT NULL,
@@ -11,7 +11,7 @@ CREATE TABLE public.profiles (
 );
 
 -- Chats table
-CREATE TABLE public.chats (
+CREATE TABLE IF NOT EXISTS public.chats (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     name TEXT NOT NULL,
     owner_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
@@ -23,7 +23,7 @@ CREATE TABLE public.chats (
 );
 
 -- Chat participants table
-CREATE TABLE public.chat_participants (
+CREATE TABLE IF NOT EXISTS public.chat_participants (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     chat_id UUID REFERENCES public.chats(id) ON DELETE CASCADE NOT NULL,
     user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
@@ -32,7 +32,7 @@ CREATE TABLE public.chat_participants (
 );
 
 -- Messages table
-CREATE TABLE public.messages (
+CREATE TABLE IF NOT EXISTS public.messages (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     chat_id UUID REFERENCES public.chats(id) ON DELETE CASCADE NOT NULL,
     user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
@@ -42,9 +42,9 @@ CREATE TABLE public.messages (
 );
 
 -- Indexes for performance
-CREATE INDEX idx_chats_owner_id ON public.chats(owner_id);
-CREATE INDEX idx_chats_invite_code ON public.chats(invite_code);
-CREATE INDEX idx_chat_participants_chat_id ON public.chat_participants(chat_id);
-CREATE INDEX idx_chat_participants_user_id ON public.chat_participants(user_id);
-CREATE INDEX idx_messages_chat_id ON public.messages(chat_id);
-CREATE INDEX idx_messages_created_at ON public.messages(created_at);
+CREATE INDEX IF NOT EXISTS idx_chats_owner_id ON public.chats(owner_id);
+CREATE INDEX IF NOT EXISTS idx_chats_invite_code ON public.chats(invite_code);
+CREATE INDEX IF NOT EXISTS idx_chat_participants_chat_id ON public.chat_participants(chat_id);
+CREATE INDEX IF NOT EXISTS idx_chat_participants_user_id ON public.chat_participants(user_id);
+CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON public.messages(chat_id);
+CREATE INDEX IF NOT EXISTS idx_messages_created_at ON public.messages(created_at);

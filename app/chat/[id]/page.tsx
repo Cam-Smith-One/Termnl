@@ -51,7 +51,14 @@ export default function ChatPage() {
       const {
         data: { session },
       } = await supabase.auth.getSession()
-      if (!session?.user || !session.user.email_confirmed_at) {
+
+      const isEmailVerified =
+        session?.user?.email_confirmed_at ||
+        session?.user?.confirmed_at ||
+        session?.user?.user_metadata?.email_verified === true ||
+        session?.user?.app_metadata?.email_verified === true
+
+      if (!session?.user || !isEmailVerified) {
         router.push("/")
         return
       }
