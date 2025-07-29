@@ -54,22 +54,6 @@ export default function TerminalPage() {
           return
         }
 
-        // Replace this section:
-        // if (!session.user.email_confirmed_at) {
-        //   router.push("/?error=email_not_verified")
-        //   return
-        // }
-
-        // With this enhanced check:
-        console.log("Terminal - User session data:", {
-          email: session.user.email,
-          email_confirmed_at: session.user.email_confirmed_at,
-          user_metadata: session.user.user_metadata,
-          app_metadata: session.user.app_metadata,
-          confirmed_at: session.user.confirmed_at,
-          email_verified: session.user.user_metadata?.email_verified,
-        })
-
         // Check multiple possible verification indicators
         const isEmailVerified =
           session.user.email_confirmed_at ||
@@ -81,6 +65,12 @@ export default function TerminalPage() {
           router.push("/?error=email_not_verified")
           return
         }
+
+        console.log("Terminal - User data:", {
+          id: session.user.id,
+          email: session.user.email,
+          metadata: session.user.user_metadata,
+        })
 
         setUser(session.user)
         await loadChats(session.user.id)
@@ -99,6 +89,10 @@ export default function TerminalPage() {
       // Get chats where user is owner or participant
       const { data: ownedChats, error: ownedError } = await supabase.from("chats").select("*").eq("owner_id", userId)
 
+      if (ownedError) {
+        console.error("Error loading owned chats:", ownedError)
+      }
+
       const { data: participantChats, error: participantError } = await supabase
         .from("chat_participants")
         .select(`
@@ -106,9 +100,14 @@ export default function TerminalPage() {
         `)
         .eq("user_id", userId)
 
-      if (ownedError || participantError) {
-        throw new Error("Failed to load chats")
+      if (participantError) {
+        console.error("Error loading participant chats:", participantError)
       }
+
+      console.log("Chats data:", {
+        ownedChats: ownedChats || [],
+        participantChats: participantChats || [],
+      })
 
       const allChats = [...(ownedChats || []), ...(participantChats?.map((p) => p.chats).filter(Boolean) || [])]
 
@@ -132,6 +131,7 @@ export default function TerminalPage() {
 
       setChats(chatsWithCounts)
     } catch (err) {
+      console.error("Failed to load chats:", err)
       setError("Failed to load chats")
     }
   }
@@ -140,9 +140,46 @@ export default function TerminalPage() {
     if (!newChatName.trim() || !user) return
 
     try {
+      setLoading(true)
+      setError("")
+
+      // First check if the user profile exists
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", user.id)
+        .single()
+
+      if (profileError) {
+        console.error("Profile error:", profileError)
+
+        // Try to create the profile if it doesn't exist
+        const username = user.user_metadata?.username || user.email?.split("@")[0] || "user"
+
+        const { error: insertError } = await supabase.from("profiles").insert({
+          id: user.id,
+          username: username,
+          email: user.email || "",
+        })
+
+        if (insertError) {
+          console.error("Failed to create profile:", insertError)
+          setError("Failed to create user profile. Please try logging out and back in.")
+          setLoading(false)
+          return
+        }
+      }
+
       const inviteCode = generateSecureInviteCode()
       const encryptionKey = generateEncryptionKey()
       const inviteUrl = `${getBaseUrl()}/join/${inviteCode}`
+
+      console.log("Creating chat with:", {
+        name: newChatName + ".chat",
+        owner_id: user.id,
+        invite_code: inviteCode,
+        invite_url: inviteUrl,
+      })
 
       const { data, error } = await supabase
         .from("chats")
@@ -156,14 +193,22 @@ export default function TerminalPage() {
         .select()
         .single()
 
-      if (error) throw error
+      if (error) {
+        console.error("Chat creation error:", error)
+        throw error
+      }
+
+      console.log("Chat created:", data)
 
       await loadChats(user.id)
       setNewChatName("")
       setShowCreateChat(false)
       setSuccess(`Chat "${newChatName}.chat" created successfully!`)
     } catch (err) {
-      setError("Failed to create chat")
+      console.error("Failed to create chat:", err)
+      setError("Failed to create chat. Please try again.")
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -171,6 +216,9 @@ export default function TerminalPage() {
     if (!joinCode.trim() || !user) return
 
     try {
+      setLoading(true)
+      setError("")
+
       // Find chat by invite code
       const { data: chat, error: chatError } = await supabase
         .from("chats")
@@ -180,6 +228,7 @@ export default function TerminalPage() {
 
       if (chatError || !chat) {
         setError("Invalid invite code")
+        setLoading(false)
         return
       }
 
@@ -193,6 +242,7 @@ export default function TerminalPage() {
 
       if (existing || chat.owner_id === user.id) {
         setError("You are already in this chat")
+        setLoading(false)
         return
       }
 
@@ -209,7 +259,10 @@ export default function TerminalPage() {
       setShowJoinChat(false)
       setSuccess(`Successfully joined "${chat.name}"!`)
     } catch (err) {
+      console.error("Failed to join chat:", err)
       setError("Failed to join chat")
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -332,13 +385,15 @@ export default function TerminalPage() {
                   <div className="flex flex-col sm:flex-row gap-2">
                     <button
                       onClick={createChat}
-                      className="w-full sm:w-auto bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm"
+                      disabled={loading}
+                      className="w-full sm:w-auto bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm disabled:opacity-50"
                     >
-                      [CREATE]
+                      {loading ? "[CREATING...]" : "[CREATE]"}
                     </button>
                     <button
                       onClick={() => setShowCreateChat(false)}
-                      className="w-full sm:w-auto bg-black border-2 border-red-400 text-red-400 hover:bg-red-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm"
+                      disabled={loading}
+                      className="w-full sm:w-auto bg-black border-2 border-red-400 text-red-400 hover:bg-red-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm disabled:opacity-50"
                     >
                       [CANCEL]
                     </button>
@@ -361,13 +416,15 @@ export default function TerminalPage() {
                   <div className="flex flex-col sm:flex-row gap-2">
                     <button
                       onClick={joinChat}
-                      className="w-full sm:w-auto bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm"
+                      disabled={loading}
+                      className="w-full sm:w-auto bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm disabled:opacity-50"
                     >
-                      [JOIN]
+                      {loading ? "[JOINING...]" : "[JOIN]"}
                     </button>
                     <button
                       onClick={() => setShowJoinChat(false)}
-                      className="w-full sm:w-auto bg-black border-2 border-red-400 text-red-400 hover:bg-red-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm"
+                      disabled={loading}
+                      className="w-full sm:w-auto bg-black border-2 border-red-400 text-red-400 hover:bg-red-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm disabled:opacity-50"
                     >
                       [CANCEL]
                     </button>
