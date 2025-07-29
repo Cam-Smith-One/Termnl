@@ -19,6 +19,7 @@ export default function LoginPage() {
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
   const [showForm, setShowForm] = useState(false)
+  const [checkingAuth, setCheckingAuth] = useState(true)
   const router = useRouter()
   const searchParams = useSearchParams()
   const supabase = createClient()
@@ -69,14 +70,65 @@ export default function LoginPage() {
 
     // Check if user is already logged in
     const checkUser = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
-      if (session?.user && session.user.email_confirmed_at) {
-        router.push("/terminal")
+      try {
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession()
+
+        console.log("Session check:", { session, error: sessionError })
+
+        if (sessionError) {
+          console.error("Session error:", sessionError)
+          setCheckingAuth(false)
+          return
+        }
+
+        if (session?.user) {
+          console.log("User found:", session.user)
+          console.log("Email confirmed:", session.user.email_confirmed_at)
+
+          if (session.user.email_confirmed_at) {
+            console.log("Redirecting to terminal...")
+            router.push("/terminal")
+            return
+          } else {
+            setError("Please verify your email before logging in")
+          }
+        }
+
+        setCheckingAuth(false)
+      } catch (err) {
+        console.error("Auth check error:", err)
+        if (err instanceof Error) {
+          setError(`Session check failed: ${err.message}`)
+        } else {
+          setError("Failed to check authentication status")
+        }
+        setCheckingAuth(false)
       }
     }
+
     checkUser()
+
+    // Listen for auth state changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log("Auth state change:", event, session)
+
+      if (event === "SIGNED_IN" && session?.user?.email_confirmed_at) {
+        console.log("User signed in, redirecting to terminal...")
+        router.push("/terminal")
+      } else if (event === "SIGNED_OUT") {
+        console.log("User signed out")
+        setCheckingAuth(false)
+      }
+    })
+
+    return () => {
+      subscription.unsubscribe()
+    }
   }, [router, supabase.auth, searchParams])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -87,18 +139,26 @@ export default function LoginPage() {
 
     try {
       if (isLogin) {
+        console.log("Attempting login for:", email)
         // Login flow
         const { data, error } = await supabase.auth.signInWithPassword({
           email,
           password,
         })
 
+        console.log("Login result:", { data, error })
+
         if (error) {
+          console.error("Login error:", error)
           setError(error.message)
-        } else if (data.user && data.user.email_confirmed_at) {
-          router.push("/terminal")
-        } else {
-          setError("Please verify your email before logging in")
+        } else if (data.user) {
+          console.log("Login successful:", data.user)
+          if (data.user.email_confirmed_at) {
+            console.log("Email confirmed, should redirect...")
+            // The onAuthStateChange listener will handle the redirect
+          } else {
+            setError("Please verify your email before logging in")
+          }
         }
       } else {
         // Registration flow
@@ -120,7 +180,12 @@ export default function LoginPage() {
         }
       }
     } catch (err) {
-      setError("An unexpected error occurred")
+      console.error("Submit error:", err)
+      if (err instanceof Error) {
+        setError(`Authentication error: ${err.message}`)
+      } else {
+        setError("An unexpected error occurred during authentication")
+      }
     } finally {
       setLoading(false)
     }
@@ -152,6 +217,18 @@ export default function LoginPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  // Show loading while checking authentication
+  if (checkingAuth) {
+    return (
+      <div className="min-h-screen bg-black text-green-400 font-mono flex items-center justify-center">
+        <div className="text-center">
+          <p>{">"} CHECKING AUTHENTICATION...</p>
+          <div className="terminal-cursor-block animate-pulse mt-2">█</div>
+        </div>
+      </div>
+    )
   }
 
   return (

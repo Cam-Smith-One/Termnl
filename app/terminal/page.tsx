@@ -37,17 +37,42 @@ export default function TerminalPage() {
     }
 
     const getUser = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
-      if (!session?.user || !session.user.email_confirmed_at) {
+      try {
+        const {
+          data: { session },
+          error: sessionError,
+        } = await supabase.auth.getSession()
+
+        console.log("Terminal page - session check:", { session, error: sessionError })
+
+        if (sessionError) {
+          console.error("Terminal page - session error:", sessionError)
+          router.push("/")
+          return
+        }
+
+        if (!session?.user) {
+          console.log("Terminal page - no user, redirecting to login")
+          router.push("/")
+          return
+        }
+
+        if (!session.user.email_confirmed_at) {
+          console.log("Terminal page - email not confirmed, redirecting to login")
+          router.push("/?error=email_not_verified")
+          return
+        }
+
+        console.log("Terminal page - user authenticated:", session.user.email)
+        setUser(session.user)
+        await loadChats(session.user.id)
+        setLoading(false)
+      } catch (err) {
+        console.error("Terminal page - auth error:", err)
         router.push("/")
-        return
       }
-      setUser(session.user)
-      await loadChats(session.user.id)
-      setLoading(false)
     }
+
     getUser()
   }, [router, supabase.auth, searchParams])
 
@@ -182,7 +207,7 @@ export default function TerminalPage() {
       <div className="min-h-screen bg-black text-green-400 font-mono flex items-center justify-center">
         <div className="text-center">
           <p>{">"} LOADING TERMINAL...</p>
-          <div className="animate-pulse mt-2">█</div>
+          <div className="terminal-cursor-block animate-pulse mt-2">█</div>
         </div>
       </div>
     )
