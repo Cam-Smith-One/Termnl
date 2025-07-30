@@ -21,6 +21,8 @@ export default function TerminalPage() {
   const [showCreateChat, setShowCreateChat] = useState(false)
   const [showJoinChat, setShowJoinChat] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [createLoading, setCreateLoading] = useState(false)
+  const [joinLoading, setJoinLoading] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
   const router = useRouter()
@@ -89,56 +91,46 @@ export default function TerminalPage() {
     try {
       console.log("Loading chats for user:", userId)
 
-      // Try to load owned chats with retry logic
-      let ownedChats: any[] = []
-      try {
-        const { data, error } = await supabase.from("chats").select("*").eq("owner_id", userId)
+      // Load owned chats
+      const { data: ownedChats, error: ownedError } = await supabase.from("chats").select("*").eq("owner_id", userId)
 
-        if (error) {
-          console.error("Error loading owned chats:", error)
-          // Don't throw here, just log and continue
-        } else {
-          ownedChats = data || []
-          console.log("Owned chats loaded:", ownedChats.length)
-        }
-      } catch (fetchError) {
-        console.error("Network error loading owned chats:", fetchError)
-        // Continue with empty array
+      if (ownedError) {
+        console.error("Error loading owned chats:", ownedError)
+        setError(`Failed to load owned chats: ${ownedError.message}`)
+        return
       }
 
-      // Try to load participant chats
+      console.log("Owned chats loaded:", ownedChats?.length || 0)
+
+      // Load participant chats
       let participantChats: any[] = []
-      try {
-        const { data: participantData, error: participantError } = await supabase
-          .from("chat_participants")
-          .select("chat_id")
-          .eq("user_id", userId)
+      const { data: participantData, error: participantError } = await supabase
+        .from("chat_participants")
+        .select("chat_id")
+        .eq("user_id", userId)
 
-        if (participantError) {
-          console.error("Error loading participant data:", participantError)
-        } else if (participantData && participantData.length > 0) {
-          const chatIds = participantData.map((p) => p.chat_id)
-          const { data: chatData, error: chatError } = await supabase.from("chats").select("*").in("id", chatIds)
+      if (participantError) {
+        console.error("Error loading participant data:", participantError)
+      } else if (participantData && participantData.length > 0) {
+        const chatIds = participantData.map((p) => p.chat_id)
+        const { data: chatData, error: chatError } = await supabase.from("chats").select("*").in("id", chatIds)
 
-          if (chatError) {
-            console.error("Error loading participant chats:", chatError)
-          } else {
-            participantChats = chatData || []
-            console.log("Participant chats loaded:", participantChats.length)
-          }
+        if (chatError) {
+          console.error("Error loading participant chats:", chatError)
+        } else {
+          participantChats = chatData || []
         }
-      } catch (fetchError) {
-        console.error("Network error loading participant chats:", fetchError)
-        // Continue with empty array
       }
+
+      console.log("Participant chats loaded:", participantChats.length)
 
       // Combine and deduplicate chats
-      const allChats = [...ownedChats, ...participantChats]
+      const allChats = [...(ownedChats || []), ...participantChats]
       const uniqueChats = allChats.filter((chat, index, self) => index === self.findIndex((c) => c.id === chat.id))
 
       console.log("All unique chats:", uniqueChats.length)
 
-      // Get participant counts for each chat (with error handling)
+      // Get participant counts for each chat
       const chatsWithCounts = await Promise.all(
         uniqueChats.map(async (chat) => {
           try {
@@ -177,41 +169,39 @@ export default function TerminalPage() {
   const createChat = async () => {
     if (!newChatName.trim() || !user) return
 
+    setCreateLoading(true)
+    setError("")
+
     try {
-      setError("")
-      const createLoading = true
-
       // First ensure the user profile exists
-      try {
-        const { data: profile, error: profileError } = await supabase
-          .from("profiles")
-          .select("*")
-          .eq("id", user.id)
-          .single()
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", user.id)
+        .single()
 
-        if (profileError && profileError.code === "PGRST116") {
-          // Profile doesn't exist, create it
-          const username = user.user_metadata?.username || user.email?.split("@")[0] || "user"
+      if (profileError && profileError.code === "PGRST116") {
+        // Profile doesn't exist, create it
+        console.log("Creating user profile...")
+        const username = user.user_metadata?.username || user.email?.split("@")[0] || "user"
 
-          const { error: insertError } = await supabase.from("profiles").insert({
-            id: user.id,
-            username: username,
-            email: user.email || "",
-          })
+        const { error: insertError } = await supabase.from("profiles").insert({
+          id: user.id,
+          username: username,
+          email: user.email || "",
+        })
 
-          if (insertError) {
-            console.error("Failed to create profile:", insertError)
-            setError("Failed to create user profile. Please try logging out and back in.")
-            return
-          }
-        } else if (profileError) {
-          console.error("Profile check error:", profileError)
-          setError("Failed to verify user profile. Please try again.")
+        if (insertError) {
+          console.error("Failed to create profile:", insertError)
+          setError(`Failed to create user profile: ${insertError.message}`)
+          setCreateLoading(false)
           return
         }
-      } catch (profileFetchError) {
-        console.error("Network error checking profile:", profileFetchError)
-        setError("Network error. Please check your connection and try again.")
+        console.log("User profile created successfully")
+      } else if (profileError) {
+        console.error("Profile check error:", profileError)
+        setError(`Profile verification failed: ${profileError.message}`)
+        setCreateLoading(false)
         return
       }
 
@@ -240,10 +230,11 @@ export default function TerminalPage() {
       if (error) {
         console.error("Chat creation error:", error)
         setError(`Failed to create chat: ${error.message}`)
+        setCreateLoading(false)
         return
       }
 
-      console.log("Chat created:", data)
+      console.log("Chat created successfully:", data)
 
       await loadChats(user.id)
       setNewChatName("")
@@ -252,15 +243,18 @@ export default function TerminalPage() {
     } catch (err) {
       console.error("Failed to create chat:", err)
       setError("Failed to create chat. Please check your connection and try again.")
+    } finally {
+      setCreateLoading(false)
     }
   }
 
   const joinChat = async () => {
     if (!joinCode.trim() || !user) return
 
-    try {
-      setError("")
+    setJoinLoading(true)
+    setError("")
 
+    try {
       // Find chat by invite code
       const { data: chat, error: chatError } = await supabase
         .from("chats")
@@ -269,7 +263,9 @@ export default function TerminalPage() {
         .single()
 
       if (chatError || !chat) {
+        console.error("Chat lookup error:", chatError)
         setError("Invalid invite code or chat not found")
+        setJoinLoading(false)
         return
       }
 
@@ -283,6 +279,7 @@ export default function TerminalPage() {
 
       if (existing || chat.owner_id === user.id) {
         setError("You are already in this chat")
+        setJoinLoading(false)
         return
       }
 
@@ -295,6 +292,7 @@ export default function TerminalPage() {
       if (joinError) {
         console.error("Join error:", joinError)
         setError(`Failed to join chat: ${joinError.message}`)
+        setJoinLoading(false)
         return
       }
 
@@ -305,6 +303,8 @@ export default function TerminalPage() {
     } catch (err) {
       console.error("Failed to join chat:", err)
       setError("Failed to join chat. Please check your connection and try again.")
+    } finally {
+      setJoinLoading(false)
     }
   }
 
@@ -418,13 +418,15 @@ export default function TerminalPage() {
             <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 mb-6">
               <button
                 onClick={() => setShowCreateChat(!showCreateChat)}
-                className="w-full sm:w-auto bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm"
+                disabled={createLoading}
+                className="w-full sm:w-auto bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm disabled:opacity-50"
               >
                 [CREATE CHAT]
               </button>
               <button
                 onClick={() => setShowJoinChat(!showJoinChat)}
-                className="w-full sm:w-auto bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm"
+                disabled={joinLoading}
+                className="w-full sm:w-auto bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm disabled:opacity-50"
               >
                 [JOIN CHAT]
               </button>
@@ -440,17 +442,20 @@ export default function TerminalPage() {
                     value={newChatName}
                     onChange={(e) => setNewChatName(e.target.value)}
                     placeholder="Enter chat name..."
+                    disabled={createLoading}
                   />
                   <div className="flex flex-col sm:flex-row gap-2">
                     <button
                       onClick={createChat}
-                      className="w-full sm:w-auto bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm"
+                      disabled={createLoading || !newChatName.trim()}
+                      className="w-full sm:w-auto bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm disabled:opacity-50"
                     >
-                      [CREATE]
+                      {createLoading ? "[CREATING...]" : "[CREATE]"}
                     </button>
                     <button
                       onClick={() => setShowCreateChat(false)}
-                      className="w-full sm:w-auto bg-black border-2 border-red-400 text-red-400 hover:bg-red-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm"
+                      disabled={createLoading}
+                      className="w-full sm:w-auto bg-black border-2 border-red-400 text-red-400 hover:bg-red-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm disabled:opacity-50"
                     >
                       [CANCEL]
                     </button>
@@ -469,17 +474,20 @@ export default function TerminalPage() {
                     value={joinCode}
                     onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
                     placeholder="Enter chat code (e.g., ABC-DEF-GHI-JKL)..."
+                    disabled={joinLoading}
                   />
                   <div className="flex flex-col sm:flex-row gap-2">
                     <button
                       onClick={joinChat}
-                      className="w-full sm:w-auto bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm"
+                      disabled={joinLoading || !joinCode.trim()}
+                      className="w-full sm:w-auto bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm disabled:opacity-50"
                     >
-                      [JOIN]
+                      {joinLoading ? "[JOINING...]" : "[JOIN]"}
                     </button>
                     <button
                       onClick={() => setShowJoinChat(false)}
-                      className="w-full sm:w-auto bg-black border-2 border-red-400 text-red-400 hover:bg-red-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm"
+                      disabled={joinLoading}
+                      className="w-full sm:w-auto bg-black border-2 border-red-400 text-red-400 hover:bg-red-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm disabled:opacity-50"
                     >
                       [CANCEL]
                     </button>
