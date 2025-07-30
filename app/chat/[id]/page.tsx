@@ -399,65 +399,72 @@ export default function ChatPage() {
   }, [chat, user, retryAttempts, params.id])
 
   const sendMessage = async () => {
-    if (!newMessage.trim() || !user || !chat || sendingMessage) return
+    const messageToSend = newMessage // Declare the variable here
+    if (!messageToSend.trim() || !user || !chat || sendingMessage) return
 
     setSendingMessage(true)
     setError("")
 
     try {
-      const encryptedContent = encryptMessage(newMessage, chat.encryption_key)
+      const encryptedContent = encryptMessage(messageToSend, chat.encryption_key)
 
       console.log("Sending message:", {
         chatId: chat.id,
         userId: user.id,
-        messageLength: newMessage.length,
+        messageLength: messageToSend.length,
       })
 
-      // Try the secure function first
-      try {
-        const { data: messageId, error } = await supabase.rpc("send_message", {
-          input_chat_id: chat.id,
-          input_user_id: user.id,
-          input_content: encryptedContent,
-          input_message_type: "text",
-        })
+      // Clear the input immediately for better UX
+      setNewMessage("")
 
-        if (error) {
-          console.error("Send message function error:", error)
-          throw error
-        }
-
-        console.log("Message sent successfully via function:", messageId)
-        setNewMessage("")
-        // Don't reload messages here - let realtime handle it
-        return
-      } catch (funcError) {
-        console.log("Function failed, trying direct insert:", funcError)
-
-        // Fallback to direct insert
-        const { error: directError } = await supabase.from("messages").insert({
+      // Use direct insert - simpler and more reliable
+      const { data: insertedMessage, error: insertError } = await supabase
+        .from("messages")
+        .insert({
           chat_id: chat.id,
           user_id: user.id,
           content: encryptedContent,
           message_type: "text",
         })
+        .select(`
+        *,
+        profiles!inner(username)
+      `)
+        .single()
 
-        if (directError) {
-          console.error("Direct insert error:", directError)
-          setError(`Failed to send message: ${directError.message}`)
-          return
-        }
-
-        console.log("Message sent successfully via direct insert")
-        setNewMessage("")
-        // Don't reload messages here - let realtime handle it
+      if (insertError) {
+        console.error("Direct insert error:", insertError)
+        setNewMessage(messageToSend) // Restore message on error
+        setError(`Failed to send message: ${insertError.message}`)
+        return
       }
+
+      console.log("Message sent successfully:", insertedMessage)
+
+      // Add the message to local state immediately (don't wait for real-time)
+      const newMsg: Message = {
+        id: insertedMessage.id,
+        chat_id: insertedMessage.chat_id,
+        user_id: insertedMessage.user_id,
+        content: insertedMessage.content,
+        message_type: insertedMessage.message_type,
+        created_at: insertedMessage.created_at,
+        username: insertedMessage.profiles?.username || user.user_metadata?.username || "You",
+      }
+
+      setMessages((prev) => {
+        // Check if message already exists to prevent duplicates
+        const exists = prev.find((msg) => msg.id === newMsg.id)
+        if (exists) return prev
+        return [...prev, newMsg]
+      })
     } catch (err) {
       console.error("Failed to send message:", err)
+      setNewMessage(messageToSend) // Restore message on error
       if (err instanceof TypeError && err.message.includes("fetch")) {
         setError("Network connection failed. Please check your internet and try again.")
       } else {
-        setError("Failed to send message. Please check your connection.")
+        setError("Failed to send message. Please try again.")
       }
     } finally {
       setSendingMessage(false)
@@ -476,27 +483,50 @@ export default function ChatPage() {
 
       console.log("Sending ASCII emoji:", emoji)
 
-      // Use the secure function to send ASCII message
-      const { data: messageId, error } = await supabase.rpc("send_message", {
-        input_chat_id: chat.id,
-        input_user_id: user.id,
-        input_content: encryptedContent,
-        input_message_type: "ascii",
-      })
+      // Use direct insert
+      const { data: insertedMessage, error: insertError } = await supabase
+        .from("messages")
+        .insert({
+          chat_id: chat.id,
+          user_id: user.id,
+          content: encryptedContent,
+          message_type: "ascii",
+        })
+        .select(`
+        *,
+        profiles!inner(username)
+      `)
+        .single()
 
-      if (error) {
-        console.error("Send emoji error:", error)
-        setError(`Failed to send emoji: ${error.message}`)
+      if (insertError) {
+        console.error("ASCII insert error:", insertError)
+        setError(`Failed to send emoji: ${insertError.message}`)
         return
       }
 
-      console.log("ASCII emoji sent successfully:", messageId)
-      setShowAsciiMenu(false)
+      console.log("ASCII emoji sent successfully:", insertedMessage)
 
-      // Don't reload messages here - let realtime handle it
+      // Add the message to local state immediately
+      const newMsg: Message = {
+        id: insertedMessage.id,
+        chat_id: insertedMessage.chat_id,
+        user_id: insertedMessage.user_id,
+        content: insertedMessage.content,
+        message_type: insertedMessage.message_type,
+        created_at: insertedMessage.created_at,
+        username: insertedMessage.profiles?.username || user.user_metadata?.username || "You",
+      }
+
+      setMessages((prev) => {
+        const exists = prev.find((msg) => msg.id === newMsg.id)
+        if (exists) return prev
+        return [...prev, newMsg]
+      })
+
+      setShowAsciiMenu(false)
     } catch (err) {
       console.error("Failed to send emoji:", err)
-      setError("Failed to send emoji. Please check your connection.")
+      setError("Failed to send emoji. Please try again.")
     } finally {
       setSendingMessage(false)
     }
