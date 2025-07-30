@@ -318,37 +318,55 @@ export default function ChatPage() {
             table: "messages",
             filter: `chat_id=eq.${params.id}`,
           },
-          (payload) => {
+          async (payload) => {
             console.log("New message received via realtime:", payload)
 
-            // Add the new message to the state immediately for better UX
             if (payload.new) {
               const newMessage = payload.new as any
 
-              // Get the username for the new message
-              supabase
-                .from("profiles")
-                .select("username")
-                .eq("id", newMessage.user_id)
-                .single()
-                .then(({ data: profile }) => {
-                  const formattedMessage: Message = {
-                    id: newMessage.id,
-                    chat_id: newMessage.chat_id,
-                    user_id: newMessage.user_id,
-                    content: newMessage.content,
-                    message_type: newMessage.message_type,
-                    created_at: newMessage.created_at,
-                    username: profile?.username || "Unknown",
-                  }
+              // Don't add our own messages again (they're already added locally)
+              if (newMessage.user_id === user.id) {
+                console.log("Skipping own message from realtime")
+                return
+              }
 
-                  // Add to messages if it's not already there
-                  setMessages((prev) => {
-                    const exists = prev.find((msg) => msg.id === formattedMessage.id)
-                    if (exists) return prev
-                    return [...prev, formattedMessage]
-                  })
+              try {
+                // Get the username for the new message
+                const { data: profile, error: profileError } = await supabase
+                  .from("profiles")
+                  .select("username")
+                  .eq("id", newMessage.user_id)
+                  .single()
+
+                if (profileError) {
+                  console.error("Error fetching profile for message:", profileError)
+                }
+
+                const formattedMessage: Message = {
+                  id: newMessage.id,
+                  chat_id: newMessage.chat_id,
+                  user_id: newMessage.user_id,
+                  content: newMessage.content,
+                  message_type: newMessage.message_type,
+                  created_at: newMessage.created_at,
+                  username: profile?.username || "Unknown",
+                }
+
+                console.log("Adding realtime message to state:", formattedMessage.username)
+
+                // Add to messages if it's not already there
+                setMessages((prev) => {
+                  const exists = prev.find((msg) => msg.id === formattedMessage.id)
+                  if (exists) {
+                    console.log("Message already exists, skipping")
+                    return prev
+                  }
+                  console.log("Adding new message from realtime")
+                  return [...prev, formattedMessage]
                 })
+              } catch (err) {
+                console.error("Error processing realtime message:", err)
+              }
             }
           },
         )
@@ -356,8 +374,13 @@ export default function ChatPage() {
           console.log("Realtime subscription status:", status)
           if (status === "SUBSCRIBED") {
             console.log("Successfully subscribed to realtime updates")
+            setConnectionStatus("connected")
           } else if (status === "CHANNEL_ERROR") {
             console.error("Realtime subscription error")
+            setConnectionStatus("disconnected")
+          } else if (status === "CLOSED") {
+            console.log("Realtime subscription closed")
+            setConnectionStatus("disconnected")
           }
         })
 
@@ -399,7 +422,7 @@ export default function ChatPage() {
   }, [chat, user, retryAttempts, params.id])
 
   const sendMessage = async () => {
-    const messageToSend = newMessage // Declare the variable here
+    const messageToSend = newMessage
     if (!messageToSend.trim() || !user || !chat || sendingMessage) return
 
     setSendingMessage(true)
@@ -426,10 +449,7 @@ export default function ChatPage() {
           content: encryptedContent,
           message_type: "text",
         })
-        .select(`
-        *,
-        profiles!inner(username)
-      `)
+        .select()
         .single()
 
       if (insertError) {
@@ -441,7 +461,10 @@ export default function ChatPage() {
 
       console.log("Message sent successfully:", insertedMessage)
 
-      // Add the message to local state immediately (don't wait for real-time)
+      // Get current user's username
+      const { data: userProfile } = await supabase.from("profiles").select("username").eq("id", user.id).single()
+
+      // Add the message to local state immediately (for sender)
       const newMsg: Message = {
         id: insertedMessage.id,
         chat_id: insertedMessage.chat_id,
@@ -449,7 +472,7 @@ export default function ChatPage() {
         content: insertedMessage.content,
         message_type: insertedMessage.message_type,
         created_at: insertedMessage.created_at,
-        username: insertedMessage.profiles?.username || user.user_metadata?.username || "You",
+        username: userProfile?.username || user.user_metadata?.username || "You",
       }
 
       setMessages((prev) => {
@@ -492,10 +515,7 @@ export default function ChatPage() {
           content: encryptedContent,
           message_type: "ascii",
         })
-        .select(`
-        *,
-        profiles!inner(username)
-      `)
+        .select()
         .single()
 
       if (insertError) {
@@ -506,7 +526,10 @@ export default function ChatPage() {
 
       console.log("ASCII emoji sent successfully:", insertedMessage)
 
-      // Add the message to local state immediately
+      // Get current user's username
+      const { data: userProfile } = await supabase.from("profiles").select("username").eq("id", user.id).single()
+
+      // Add the message to local state immediately (for sender)
       const newMsg: Message = {
         id: insertedMessage.id,
         chat_id: insertedMessage.chat_id,
@@ -514,7 +537,7 @@ export default function ChatPage() {
         content: insertedMessage.content,
         message_type: insertedMessage.message_type,
         created_at: insertedMessage.created_at,
-        username: insertedMessage.profiles?.username || user.user_metadata?.username || "You",
+        username: userProfile?.username || user.user_metadata?.username || "You",
       }
 
       setMessages((prev) => {
