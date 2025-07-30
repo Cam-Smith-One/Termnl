@@ -13,70 +13,26 @@ DROP POLICY IF EXISTS "chat_participants_delete_own" ON public.chat_participants
 DROP POLICY IF EXISTS "messages_select_access" ON public.messages;
 DROP POLICY IF EXISTS "messages_insert_own" ON public.messages;
 
+-- Drop the function that might be causing issues
+DROP FUNCTION IF EXISTS user_can_access_chat(uuid, uuid);
+
 -- Create simple, non-recursive policies
 
 -- Profiles policies - simple ownership
 CREATE POLICY "profiles_own_access" ON public.profiles
     FOR ALL USING (auth.uid() = id);
 
--- Chats policies - separate policies for different access patterns
-CREATE POLICY "chats_owner_all_access" ON public.chats
+-- Chats policies - SIMPLE ownership only, no participant checks
+CREATE POLICY "chats_owner_access" ON public.chats
     FOR ALL USING (auth.uid() = owner_id);
-
--- Allow participants to SELECT chats they're part of (using a function to avoid recursion)
-CREATE OR REPLACE FUNCTION user_can_access_chat(chat_id uuid, user_id uuid)
-RETURNS boolean AS $$
-BEGIN
-    -- Check if user is owner
-    IF EXISTS (
-        SELECT 1 FROM public.chats 
-        WHERE id = chat_id AND owner_id = user_id
-    ) THEN
-        RETURN true;
-    END IF;
-    
-    -- Check if user is participant
-    IF EXISTS (
-        SELECT 1 FROM public.chat_participants 
-        WHERE chat_participants.chat_id = chat_id AND chat_participants.user_id = user_id
-    ) THEN
-        RETURN true;
-    END IF;
-    
-    RETURN false;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
-CREATE POLICY "chats_participant_select" ON public.chats
-    FOR SELECT USING (user_can_access_chat(id, auth.uid()));
 
 -- Chat participants policies - simple ownership
 CREATE POLICY "chat_participants_own_access" ON public.chat_participants
     FOR ALL USING (auth.uid() = user_id);
 
--- Allow viewing participants of chats the user owns
-CREATE POLICY "chat_participants_owner_view" ON public.chat_participants
-    FOR SELECT USING (
-        EXISTS (
-            SELECT 1 FROM public.chats 
-            WHERE chats.id = chat_participants.chat_id 
-            AND chats.owner_id = auth.uid()
-        )
-    );
-
--- Messages policies - use the function to avoid recursion
-CREATE POLICY "messages_access" ON public.messages
-    FOR SELECT USING (user_can_access_chat(chat_id, auth.uid()));
-
-CREATE POLICY "messages_insert_own" ON public.messages
-    FOR INSERT WITH CHECK (
-        auth.uid() = user_id 
-        AND user_can_access_chat(chat_id, auth.uid())
-    );
-
--- Grant permissions to the function
-GRANT EXECUTE ON FUNCTION user_can_access_chat(uuid, uuid) TO authenticated;
-GRANT EXECUTE ON FUNCTION user_can_access_chat(uuid, uuid) TO service_role;
+-- Messages policies - simple checks without recursion
+CREATE POLICY "messages_own_access" ON public.messages
+    FOR ALL USING (auth.uid() = user_id);
 
 -- Grant necessary permissions
 GRANT USAGE ON SCHEMA public TO authenticated;

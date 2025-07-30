@@ -10,10 +10,14 @@ import { getInviteBaseUrl } from "@/lib/constants"
 import type { Database } from "@/lib/supabase/types"
 import { TerminalInput } from "@/components/terminal-input"
 
-type Message = Database["public"]["Tables"]["messages"]["Row"] & {
-  profiles: {
-    username: string
-  }
+type Message = {
+  id: string
+  chat_id: string
+  user_id: string
+  content: string
+  message_type: string
+  created_at: string
+  username: string
 }
 
 type Chat = Database["public"]["Tables"]["chats"]["Row"]
@@ -41,12 +45,205 @@ export default function ChatPage() {
   const [newChatName, setNewChatName] = useState("")
   const [showAsciiMenu, setShowAsciiMenu] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [sendingMessage, setSendingMessage] = useState(false)
   const [error, setError] = useState("")
   const [copySuccess, setCopySuccess] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
   const params = useParams()
   const supabase = createClient()
+  const [connectionStatus, setConnectionStatus] = useState<"connected" | "connecting" | "disconnected">("connected")
+  const [retryAttempts, setRetryAttempts] = useState(0)
+
+  const loadChat = async (userId: string, chatId: string, retryCount = 0) => {
+    try {
+      console.log("Loading chat:", { userId, chatId, retryCount })
+
+      // Add delay for retries
+      if (retryCount > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 1000 * retryCount))
+      }
+
+      // Use the secure function to get user's chats
+      const { data: userChats, error: functionError } = await supabase.rpc("get_user_chats", {
+        input_user_id: userId,
+      })
+
+      if (functionError) {
+        console.error("Function error:", functionError)
+
+        // Check if it's a network error and retry
+        if (functionError.message?.includes("fetch") || functionError.message?.includes("network")) {
+          if (retryCount < 3) {
+            console.log(`Network error, retrying... (attempt ${retryCount + 1}/3)`)
+            return loadChat(userId, chatId, retryCount + 1)
+          }
+        }
+
+        setError(`Failed to load chat: ${functionError.message}`)
+        return
+      }
+
+      const chatData = userChats?.find((c) => c.id === chatId)
+
+      if (!chatData) {
+        // Try direct database query as fallback
+        console.log("Chat not found in function result, trying direct query...")
+
+        try {
+          const { data: directChatData, error: directError } = await supabase
+            .from("chats")
+            .select("*")
+            .eq("id", chatId)
+            .single()
+
+          if (directError || !directChatData) {
+            setError("Chat not found or you don't have access to it")
+            return
+          }
+
+          // Check if user has access to this chat
+          const isOwner = directChatData.owner_id === userId
+          const { data: participantData } = await supabase
+            .from("chat_participants")
+            .select("*")
+            .eq("chat_id", chatId)
+            .eq("user_id", userId)
+            .single()
+
+          if (!isOwner && !participantData) {
+            setError("You don't have permission to access this chat")
+            return
+          }
+
+          console.log("Chat loaded via direct query:", directChatData.name)
+          setChat(directChatData)
+          setIsOwner(isOwner)
+          return
+        } catch (directErr) {
+          console.error("Direct query also failed:", directErr)
+          setError("Chat not found or you don't have access to it")
+          return
+        }
+      }
+
+      console.log("Chat loaded successfully:", chatData.name)
+      setChat({
+        id: chatData.id,
+        name: chatData.name,
+        owner_id: chatData.owner_id,
+        invite_code: chatData.invite_code,
+        invite_url: chatData.invite_url,
+        encryption_key: chatData.encryption_key,
+        created_at: chatData.created_at,
+        updated_at: chatData.updated_at,
+      })
+      setIsOwner(chatData.is_owner)
+    } catch (err) {
+      console.error("Failed to load chat:", err)
+
+      // Check if it's a network error and retry
+      if (err instanceof TypeError && err.message.includes("fetch")) {
+        if (retryCount < 3) {
+          console.log(`Network error caught, retrying... (attempt ${retryCount + 1}/3)`)
+          return loadChat(userId, chatId, retryCount + 1)
+        } else {
+          setError("Network connection failed. Please check your internet connection and try again.")
+          return
+        }
+      }
+
+      setError(`Failed to load chat: ${err instanceof Error ? err.message : "Unknown error"}`)
+    }
+  }
+
+  const loadMessages = async (chatId: string, retryCount = 0) => {
+    try {
+      console.log("Loading messages for chat:", chatId, "retry:", retryCount)
+
+      // Add delay for retries
+      if (retryCount > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 500 * retryCount))
+      }
+
+      try {
+        const { data, error } = await supabase.rpc("get_chat_messages", {
+          input_chat_id: chatId,
+          input_user_id: user?.id,
+        })
+
+        if (error) {
+          console.error("Function error loading messages:", error)
+
+          // Check if it's a network error and retry
+          if (error.message?.includes("fetch") || error.message?.includes("network")) {
+            if (retryCount < 2) {
+              console.log(`Network error loading messages, retrying... (attempt ${retryCount + 1}/2)`)
+              return loadMessages(chatId, retryCount + 1)
+            }
+          }
+
+          // Don't fail the whole chat for message loading issues
+          console.error("Failed to load messages via function, trying direct query...")
+          throw error
+        }
+
+        console.log("Messages loaded via function:", data?.length || 0)
+        setMessages(data || [])
+        return
+      } catch (funcError) {
+        console.log("Function failed for messages, trying direct query:", funcError)
+
+        // Fallback to direct query
+        const { data, error } = await supabase
+          .from("messages")
+          .select(`
+          *,
+          profiles (username)
+        `)
+          .eq("chat_id", chatId)
+          .order("created_at", { ascending: true })
+
+        if (error) {
+          console.error("Direct query error loading messages:", error)
+
+          // Check if it's a network error and retry
+          if (error.message?.includes("fetch") && retryCount < 2) {
+            console.log(`Network error on direct query, retrying... (attempt ${retryCount + 1}/2)`)
+            return loadMessages(chatId, retryCount + 1)
+          }
+
+          console.error("Failed to load messages, but continuing...")
+          return
+        }
+
+        console.log("Messages loaded via direct query:", data?.length || 0)
+
+        // Transform the data to match our expected format
+        const transformedMessages = (data || []).map((msg) => ({
+          id: msg.id,
+          chat_id: msg.chat_id,
+          user_id: msg.user_id,
+          content: msg.content,
+          message_type: msg.message_type,
+          created_at: msg.created_at,
+          username: msg.profiles?.username || "Unknown",
+        }))
+
+        setMessages(transformedMessages)
+      }
+    } catch (err) {
+      console.error("Failed to load messages:", err)
+
+      // Check if it's a network error and retry
+      if (err instanceof TypeError && err.message.includes("fetch") && retryCount < 2) {
+        console.log(`Network error caught loading messages, retrying... (attempt ${retryCount + 1}/2)`)
+        return loadMessages(chatId, retryCount + 1)
+      }
+
+      console.error("Message loading failed completely, but continuing with empty messages")
+    }
+  }
 
   useEffect(() => {
     const initializeChat = async () => {
@@ -100,13 +297,17 @@ export default function ChatPage() {
             filter: `chat_id=eq.${params.id}`,
           },
           (payload) => {
-            console.log("New message received:", payload)
+            console.log("New message received via realtime:", payload)
+            // Reload messages when new message is inserted
             loadMessages(params.id as string)
           },
         )
-        .subscribe()
+        .subscribe((status) => {
+          console.log("Realtime subscription status:", status)
+        })
 
       return () => {
+        console.log("Cleaning up realtime subscription")
         supabase.removeChannel(channel)
       }
     }
@@ -116,99 +317,37 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages])
 
-  const loadChat = async (userId: string, chatId: string) => {
-    try {
-      console.log("Loading chat:", { userId, chatId })
-
-      // First, try to get the chat directly
-      const { data: chatData, error: chatError } = await supabase.from("chats").select("*").eq("id", chatId).single()
-
-      console.log("Chat query result:", { chatData, chatError })
-
-      if (chatError) {
-        console.error("Chat query error:", chatError)
-
-        if (chatError.code === "PGRST116") {
-          setError("Chat not found or you don't have access to it")
-        } else {
-          setError(`Failed to load chat: ${chatError.message}`)
-        }
-        return
+  useEffect(() => {
+    // Monitor connection status
+    const handleOnline = () => {
+      console.log("Connection restored")
+      setConnectionStatus("connected")
+      if (chat && user && retryAttempts > 0) {
+        console.log("Retrying after connection restored...")
+        loadMessages(params.id as string)
+        setRetryAttempts(0)
       }
-
-      if (!chatData) {
-        setError("Chat not found")
-        return
-      }
-
-      // Check if user is the owner
-      const isOwner = chatData.owner_id === userId
-      console.log("Is owner:", isOwner)
-
-      // If not owner, check if user is a participant
-      let isParticipant = false
-      if (!isOwner) {
-        const { data: participantData, error: participantError } = await supabase
-          .from("chat_participants")
-          .select("*")
-          .eq("chat_id", chatId)
-          .eq("user_id", userId)
-          .single()
-
-        console.log("Participant check:", { participantData, participantError })
-
-        if (participantError && participantError.code !== "PGRST116") {
-          console.error("Error checking participant status:", participantError)
-        }
-
-        isParticipant = !!participantData
-      }
-
-      console.log("Access check:", { isOwner, isParticipant })
-
-      if (!isOwner && !isParticipant) {
-        setError("You don't have access to this chat")
-        return
-      }
-
-      setChat(chatData)
-      setIsOwner(isOwner)
-      console.log("Chat loaded successfully:", chatData.name)
-    } catch (err) {
-      console.error("Failed to load chat:", err)
-      setError("Failed to load chat. Please check your connection.")
     }
-  }
 
-  const loadMessages = async (chatId: string) => {
-    try {
-      console.log("Loading messages for chat:", chatId)
-
-      const { data, error } = await supabase
-        .from("messages")
-        .select(`
-          *,
-          profiles (username)
-        `)
-        .eq("chat_id", chatId)
-        .order("created_at", { ascending: true })
-
-      console.log("Messages query result:", { messagesCount: data?.length, error })
-
-      if (error) {
-        console.error("Error loading messages:", error)
-        return
-      }
-
-      setMessages(data || [])
-    } catch (err) {
-      console.error("Failed to load messages:", err)
-      // Don't set error here as it's not critical
+    const handleOffline = () => {
+      console.log("Connection lost")
+      setConnectionStatus("disconnected")
     }
-  }
+
+    window.addEventListener("online", handleOnline)
+    window.addEventListener("offline", handleOffline)
+
+    return () => {
+      window.removeEventListener("online", handleOnline)
+      window.removeEventListener("offline", handleOffline)
+    }
+  }, [chat, user, retryAttempts, params.id])
 
   const sendMessage = async () => {
-    if (!newMessage.trim() || !user || !chat) return
+    if (!newMessage.trim() || !user || !chat || sendingMessage) return
+
+    setSendingMessage(true)
+    setError("")
 
     try {
       const encryptedContent = encryptMessage(newMessage, chat.encryption_key)
@@ -219,39 +358,75 @@ export default function ChatPage() {
         messageLength: newMessage.length,
       })
 
-      const { error } = await supabase.from("messages").insert({
-        chat_id: chat.id,
-        user_id: user.id,
-        content: encryptedContent,
-        message_type: "text",
-      })
+      // Try the secure function first
+      try {
+        const { data: messageId, error } = await supabase.rpc("send_message", {
+          input_chat_id: chat.id,
+          input_user_id: user.id,
+          input_content: encryptedContent,
+          input_message_type: "text",
+        })
 
-      if (error) {
-        console.error("Send message error:", error)
-        setError(`Failed to send message: ${error.message}`)
+        if (error) {
+          console.error("Send message function error:", error)
+          throw error
+        }
+
+        console.log("Message sent successfully via function:", messageId)
+        setNewMessage("")
+        await loadMessages(params.id as string)
         return
-      }
+      } catch (funcError) {
+        console.log("Function failed, trying direct insert:", funcError)
 
-      setNewMessage("")
-      console.log("Message sent successfully")
+        // Fallback to direct insert
+        const { error: directError } = await supabase.from("messages").insert({
+          chat_id: chat.id,
+          user_id: user.id,
+          content: encryptedContent,
+          message_type: "text",
+        })
+
+        if (directError) {
+          console.error("Direct insert error:", directError)
+          setError(`Failed to send message: ${directError.message}`)
+          return
+        }
+
+        console.log("Message sent successfully via direct insert")
+        setNewMessage("")
+        await loadMessages(params.id as string)
+      }
     } catch (err) {
       console.error("Failed to send message:", err)
-      setError("Failed to send message. Please check your connection.")
+      if (err instanceof TypeError && err.message.includes("fetch")) {
+        setError("Network connection failed. Please check your internet and try again.")
+      } else {
+        setError("Failed to send message. Please check your connection.")
+      }
+    } finally {
+      setSendingMessage(false)
     }
   }
 
   const sendAsciiEmoji = async (emoji: string) => {
-    if (!user || !chat) return
+    if (!user || !chat || sendingMessage) return
+
+    setSendingMessage(true)
+    setError("")
 
     try {
       const emojiContent = ASCII_EMOJIS[emoji as keyof typeof ASCII_EMOJIS]
       const encryptedContent = encryptMessage(emojiContent, chat.encryption_key)
 
-      const { error } = await supabase.from("messages").insert({
-        chat_id: chat.id,
-        user_id: user.id,
-        content: encryptedContent,
-        message_type: "ascii",
+      console.log("Sending ASCII emoji:", emoji)
+
+      // Use the secure function to send ASCII message
+      const { data: messageId, error } = await supabase.rpc("send_message", {
+        input_chat_id: chat.id,
+        input_user_id: user.id,
+        input_content: encryptedContent,
+        input_message_type: "ascii",
       })
 
       if (error) {
@@ -260,10 +435,16 @@ export default function ChatPage() {
         return
       }
 
+      console.log("ASCII emoji sent successfully:", messageId)
       setShowAsciiMenu(false)
+
+      // Reload messages to show the new emoji
+      await loadMessages(params.id as string)
     } catch (err) {
       console.error("Failed to send emoji:", err)
       setError("Failed to send emoji. Please check your connection.")
+    } finally {
+      setSendingMessage(false)
     }
   }
 
@@ -313,8 +494,7 @@ export default function ChatPage() {
   const copyInviteUrl = async () => {
     if (chat?.invite_code) {
       try {
-        // Always use the production domain for invite URLs
-        const inviteUrl = `${getInviteBaseUrl()}/join/${chat.invite_code}`
+        const inviteUrl = `${getInviteBaseUrl()}/join/${chat?.invite_code}`
         await navigator.clipboard.writeText(inviteUrl)
         setCopySuccess(true)
         setTimeout(() => setCopySuccess(false), 2000)
@@ -432,6 +612,24 @@ export default function ChatPage() {
           </div>
         </div>
 
+        {/* Connection Status Indicator */}
+        {connectionStatus !== "connected" && (
+          <div className="text-xs sm:text-sm mb-2">
+            <div
+              className={`p-2 border ${
+                connectionStatus === "disconnected"
+                  ? "border-red-400 text-red-400 bg-red-900/20"
+                  : "border-yellow-400 text-yellow-400 bg-yellow-900/20"
+              }`}
+            >
+              <p>
+                {">"} CONNECTION: {connectionStatus.toUpperCase()}
+                {connectionStatus === "disconnected" && " - Messages may not send until reconnected"}
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Chat Interface */}
         <div className="bg-black border-green-400 border-t-0 rounded-t-none border p-3 sm:p-6 min-h-[600px] flex flex-col">
           {error && (
@@ -492,16 +690,17 @@ export default function ChatPage() {
               )}
             </div>
             <div className="text-xs sm:text-sm">
-              <span>ENCRYPTED CHAT</span>
+              <span>ENCRYPTED CHAT | {messages.length} MESSAGES</span>
             </div>
           </div>
 
           {/* Messages Area */}
-          <div className="flex-1 bg-gray-900 border border-green-400 p-2 sm:p-4 mb-4 overflow-y-auto max-h-64 sm:max-h-96">
+          <div className="flex-1 bg-gray-900 border border-green-400 p-2 sm:p-4 mb-4 overflow-y-auto max-h-64 sm:max-h-96 terminal-scroll">
             <div className="space-y-2">
               {messages.length === 0 ? (
                 <div className="text-center text-green-600 py-4 text-xs sm:text-sm">
-                  No messages yet. Start the conversation!
+                  <p>No messages yet. Start the conversation!</p>
+                  <div className="terminal-cursor-block mt-2 mx-auto">█</div>
                 </div>
               ) : (
                 messages.map((message) => {
@@ -510,7 +709,7 @@ export default function ChatPage() {
                     <div key={message.id} className="text-xs sm:text-sm">
                       <div className="flex flex-wrap items-start gap-1 sm:gap-2">
                         <span className="text-green-300">[{new Date(message.created_at).toLocaleTimeString()}]</span>
-                        <span className="text-yellow-400">{message.profiles?.username || "Unknown"}:</span>
+                        <span className="text-yellow-400">{message.username || "Unknown"}:</span>
                       </div>
                       {message.message_type === "ascii" ? (
                         <pre className="text-green-400 ml-2 sm:ml-4 text-[10px] sm:text-xs leading-tight whitespace-pre-wrap overflow-x-auto">
@@ -538,7 +737,8 @@ export default function ChatPage() {
                     <button
                       key={emoji}
                       onClick={() => sendAsciiEmoji(emoji)}
-                      className="bg-black border border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono text-[10px] sm:text-xs py-1 px-1 sm:px-2 transition-colors uppercase tracking-wider"
+                      disabled={sendingMessage}
+                      className="bg-black border border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono text-[10px] sm:text-xs py-1 px-1 sm:px-2 transition-colors uppercase tracking-wider disabled:opacity-50"
                     >
                       [{emoji}]
                     </button>
@@ -556,19 +756,22 @@ export default function ChatPage() {
                 onKeyPress={handleKeyPress}
                 placeholder="Type your message..."
                 className="flex-1 p-2"
+                disabled={sendingMessage}
               />
               <div className="flex gap-2">
                 <button
                   onClick={() => setShowAsciiMenu(!showAsciiMenu)}
-                  className="flex-1 sm:flex-none bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm"
+                  disabled={sendingMessage}
+                  className="flex-1 sm:flex-none bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm disabled:opacity-50"
                 >
                   [ASCII]
                 </button>
                 <button
                   onClick={sendMessage}
-                  className="flex-1 sm:flex-none bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm"
+                  disabled={sendingMessage || !newMessage.trim()}
+                  className="flex-1 sm:flex-none bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm disabled:opacity-50"
                 >
-                  [SEND]
+                  {sendingMessage ? "[SENDING...]" : "[SEND]"}
                 </button>
               </div>
             </div>
@@ -581,7 +784,7 @@ export default function ChatPage() {
           <p className="break-all">
             {">"} Share code "{chat?.invite_code}" or URL: {getInviteBaseUrl()}/join/{chat?.invite_code}
           </p>
-          <p>{">"} All messages are encrypted end-to-end</p>
+          <p>{">"} All messages are encrypted end-to-end | Real-time updates enabled</p>
         </div>
       </div>
     </div>

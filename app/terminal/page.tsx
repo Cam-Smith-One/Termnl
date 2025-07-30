@@ -87,77 +87,40 @@ export default function TerminalPage() {
     getUser()
   }, [router, supabase.auth, searchParams])
 
+  // Load chats using the secure function
   const loadChats = async (userId: string) => {
     try {
       console.log("Loading chats for user:", userId)
 
-      // Load owned chats
-      const { data: ownedChats, error: ownedError } = await supabase.from("chats").select("*").eq("owner_id", userId)
+      const { data: chatsData, error: chatsError } = await supabase.rpc("get_user_chats", {
+        input_user_id: userId,
+      })
 
-      if (ownedError) {
-        console.error("Error loading owned chats:", ownedError)
-        setError(`Failed to load owned chats: ${ownedError.message}`)
+      if (chatsError) {
+        console.error("Error loading chats:", chatsError)
+        setError("Failed to load chats. Please check your connection and try refreshing.")
         return
       }
 
-      console.log("Owned chats loaded:", ownedChats?.length || 0)
+      console.log("Chats loaded:", chatsData?.length || 0)
 
-      // Load participant chats
-      let participantChats: any[] = []
-      const { data: participantData, error: participantError } = await supabase
-        .from("chat_participants")
-        .select("chat_id")
-        .eq("user_id", userId)
+      // Transform the data to match our expected format
+      const transformedChats = (chatsData || []).map((chat) => ({
+        id: chat.id,
+        name: chat.name,
+        owner_id: chat.owner_id,
+        invite_code: chat.invite_code,
+        invite_url: chat.invite_url,
+        encryption_key: chat.encryption_key,
+        created_at: chat.created_at,
+        updated_at: chat.updated_at,
+        participants_count: chat.participants_count,
+      }))
 
-      if (participantError) {
-        console.error("Error loading participant data:", participantError)
-      } else if (participantData && participantData.length > 0) {
-        const chatIds = participantData.map((p) => p.chat_id)
-        const { data: chatData, error: chatError } = await supabase.from("chats").select("*").in("id", chatIds)
-
-        if (chatError) {
-          console.error("Error loading participant chats:", chatError)
-        } else {
-          participantChats = chatData || []
-        }
-      }
-
-      console.log("Participant chats loaded:", participantChats.length)
-
-      // Combine and deduplicate chats
-      const allChats = [...(ownedChats || []), ...participantChats]
-      const uniqueChats = allChats.filter((chat, index, self) => index === self.findIndex((c) => c.id === chat.id))
-
-      console.log("All unique chats:", uniqueChats.length)
-
-      // Get participant counts for each chat
-      const chatsWithCounts = await Promise.all(
-        uniqueChats.map(async (chat) => {
-          try {
-            const { count } = await supabase
-              .from("chat_participants")
-              .select("*", { count: "exact", head: true })
-              .eq("chat_id", chat.id)
-
-            return {
-              ...chat,
-              participants_count: (count || 0) + 1, // +1 for owner
-            }
-          } catch (countError) {
-            console.error("Error getting participant count for chat:", chat.id, countError)
-            return {
-              ...chat,
-              participants_count: 1, // Default to 1 (owner only)
-            }
-          }
-        }),
-      )
-
-      console.log("Chats with counts:", chatsWithCounts.length)
-      setChats(chatsWithCounts)
+      setChats(transformedChats)
 
       // Clear any previous errors if we successfully loaded chats
-      if (error && chatsWithCounts.length >= 0) {
+      if (error) {
         setError("")
       }
     } catch (err) {
@@ -207,7 +170,6 @@ export default function TerminalPage() {
 
       const inviteCode = generateSecureInviteCode()
       const encryptionKey = generateEncryptionKey()
-      // Use the dedicated invite base URL function
       const inviteUrl = `${getInviteBaseUrl()}/join/${inviteCode}`
 
       console.log("Creating chat with:", {
@@ -257,51 +219,33 @@ export default function TerminalPage() {
     setError("")
 
     try {
-      // Find chat by invite code
-      const { data: chat, error: chatError } = await supabase
-        .from("chats")
-        .select("*")
-        .eq("invite_code", joinCode.toUpperCase())
-        .single()
+      console.log("Joining chat with code:", joinCode)
 
-      if (chatError || !chat) {
-        console.error("Chat lookup error:", chatError)
-        setError("Invalid invite code or chat not found")
-        setJoinLoading(false)
-        return
-      }
-
-      // Check if already a participant
-      const { data: existing } = await supabase
-        .from("chat_participants")
-        .select("*")
-        .eq("chat_id", chat.id)
-        .eq("user_id", user.id)
-        .single()
-
-      if (existing || chat.owner_id === user.id) {
-        setError("You are already in this chat")
-        setJoinLoading(false)
-        return
-      }
-
-      // Join the chat
-      const { error: joinError } = await supabase.from("chat_participants").insert({
-        chat_id: chat.id,
-        user_id: user.id,
+      // Use the secure function to join chat
+      const { data: chatId, error } = await supabase.rpc("join_chat_by_code", {
+        input_invite_code: joinCode.toUpperCase(),
+        input_user_id: user.id,
       })
 
-      if (joinError) {
-        console.error("Join error:", joinError)
-        setError(`Failed to join chat: ${joinError.message}`)
+      if (error) {
+        console.error("Join chat error:", error)
+        if (error.message.includes("Invalid invite code")) {
+          setError("Invalid invite code or chat not found")
+        } else if (error.message.includes("already in chat")) {
+          setError("You are already in this chat")
+        } else {
+          setError(`Failed to join chat: ${error.message}`)
+        }
         setJoinLoading(false)
         return
       }
+
+      console.log("Successfully joined chat:", chatId)
 
       await loadChats(user.id)
       setJoinCode("")
       setShowJoinChat(false)
-      setSuccess(`Successfully joined "${chat.name}"!`)
+      setSuccess("Successfully joined the chat!")
     } catch (err) {
       console.error("Failed to join chat:", err)
       setError("Failed to join chat. Please check your connection and try again.")
@@ -552,6 +496,7 @@ export default function TerminalPage() {
               <p>{">"} Click on any chat file to enter the room</p>
               <p>{">"} All messages are encrypted end-to-end</p>
               <p>{">"} Share TERMNL.APP with friends to join the network</p>
+              <p>{">"} Real-time messaging with secure functions enabled</p>
             </div>
           </div>
         </div>
