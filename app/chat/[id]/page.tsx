@@ -305,7 +305,9 @@ export default function ChatPage() {
     if (chat && user) {
       loadMessages(params.id as string)
 
-      // Set up real-time subscription for messages
+      // Set up real-time subscription for messages with better error handling
+      console.log("Setting up realtime subscription for chat:", params.id)
+
       const channel = supabase
         .channel(`chat-${params.id}`)
         .on(
@@ -318,12 +320,45 @@ export default function ChatPage() {
           },
           (payload) => {
             console.log("New message received via realtime:", payload)
-            // Reload messages when new message is inserted
-            loadMessages(params.id as string)
+
+            // Add the new message to the state immediately for better UX
+            if (payload.new) {
+              const newMessage = payload.new as any
+
+              // Get the username for the new message
+              supabase
+                .from("profiles")
+                .select("username")
+                .eq("id", newMessage.user_id)
+                .single()
+                .then(({ data: profile }) => {
+                  const formattedMessage: Message = {
+                    id: newMessage.id,
+                    chat_id: newMessage.chat_id,
+                    user_id: newMessage.user_id,
+                    content: newMessage.content,
+                    message_type: newMessage.message_type,
+                    created_at: newMessage.created_at,
+                    username: profile?.username || "Unknown",
+                  }
+
+                  // Add to messages if it's not already there
+                  setMessages((prev) => {
+                    const exists = prev.find((msg) => msg.id === formattedMessage.id)
+                    if (exists) return prev
+                    return [...prev, formattedMessage]
+                  })
+                })
+            }
           },
         )
         .subscribe((status) => {
           console.log("Realtime subscription status:", status)
+          if (status === "SUBSCRIBED") {
+            console.log("Successfully subscribed to realtime updates")
+          } else if (status === "CHANNEL_ERROR") {
+            console.error("Realtime subscription error")
+          }
         })
 
       return () => {
@@ -394,7 +429,7 @@ export default function ChatPage() {
 
         console.log("Message sent successfully via function:", messageId)
         setNewMessage("")
-        await loadMessages(params.id as string)
+        // Don't reload messages here - let realtime handle it
         return
       } catch (funcError) {
         console.log("Function failed, trying direct insert:", funcError)
@@ -415,7 +450,7 @@ export default function ChatPage() {
 
         console.log("Message sent successfully via direct insert")
         setNewMessage("")
-        await loadMessages(params.id as string)
+        // Don't reload messages here - let realtime handle it
       }
     } catch (err) {
       console.error("Failed to send message:", err)
@@ -458,8 +493,7 @@ export default function ChatPage() {
       console.log("ASCII emoji sent successfully:", messageId)
       setShowAsciiMenu(false)
 
-      // Reload messages to show the new emoji
-      await loadMessages(params.id as string)
+      // Don't reload messages here - let realtime handle it
     } catch (err) {
       console.error("Failed to send emoji:", err)
       setError("Failed to send emoji. Please check your connection.")
@@ -736,7 +770,7 @@ export default function ChatPage() {
               )}
             </div>
             <div className="text-xs sm:text-sm">
-              <span>ENCRYPTED CHAT | {messages.length} MESSAGES</span>
+              <span>ENCRYPTED CHAT | {messages.length} MESSAGES | REALTIME</span>
             </div>
           </div>
 

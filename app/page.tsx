@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/client"
 import { getBaseUrl } from "@/lib/constants"
 import { TerminalInput } from "@/components/terminal-input"
 import { TerminalTypewriter } from "@/components/terminal-typewriter"
+import { joinChatAction } from "@/app/actions/join-chat"
 
 export default function LoginPage() {
   const [isLogin, setIsLogin] = useState(true)
@@ -22,6 +23,7 @@ export default function LoginPage() {
   const [checkingAuth, setCheckingAuth] = useState(true)
   const [needsVerification, setNeedsVerification] = useState(false)
   const [pendingJoinCode, setPendingJoinCode] = useState("")
+  const [processingJoin, setProcessingJoin] = useState(false)
   const router = useRouter()
   const searchParams = useSearchParams()
   const supabase = createClient()
@@ -132,9 +134,9 @@ export default function LoginPage() {
             session.user.app_metadata?.email_verified === true
 
           if (isEmailVerified) {
-            // If there's a pending join code, redirect to join page
+            // If there's a pending join code, process it
             if (joinCode) {
-              router.push(`/join/${joinCode}`)
+              await handleAutoJoin(joinCode)
             } else {
               router.push("/terminal")
             }
@@ -161,9 +163,9 @@ export default function LoginPage() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === "SIGNED_IN" && session?.user?.email_confirmed_at) {
-        // If there's a pending join code, redirect to join page
+        // If there's a pending join code, process it
         if (pendingJoinCode) {
-          router.push(`/join/${pendingJoinCode}`)
+          await handleAutoJoin(pendingJoinCode)
         } else {
           router.push("/terminal")
         }
@@ -181,6 +183,37 @@ export default function LoginPage() {
       subscription.unsubscribe()
     }
   }, [router, supabase.auth, searchParams, pendingJoinCode])
+
+  // Handle automatic join after authentication
+  const handleAutoJoin = async (joinCode: string) => {
+    try {
+      setProcessingJoin(true)
+      console.log("Auto-joining chat with code:", joinCode)
+
+      const result = await joinChatAction(joinCode)
+
+      if (result.success && result.redirectTo) {
+        setSuccess(`Successfully joined chat! Redirecting...`)
+        setTimeout(() => {
+          router.push(result.redirectTo!)
+        }, 1500)
+      } else {
+        // If join fails, still go to terminal but show error
+        setError(result.error || "Failed to auto-join chat")
+        setTimeout(() => {
+          router.push("/terminal")
+        }, 2000)
+      }
+    } catch (err) {
+      console.error("Auto-join error:", err)
+      setError("Failed to join chat automatically")
+      setTimeout(() => {
+        router.push("/terminal")
+      }, 2000)
+    } finally {
+      setProcessingJoin(false)
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -200,7 +233,7 @@ export default function LoginPage() {
           setError(error.message)
         } else if (data.user) {
           if (data.user.email_confirmed_at) {
-            // The onAuthStateChange listener will handle the redirect
+            // The onAuthStateChange listener will handle the redirect and auto-join
           } else {
             setError("Please verify your email before logging in")
             setNeedsVerification(true)
@@ -267,12 +300,14 @@ export default function LoginPage() {
     }
   }
 
-  // Show loading while checking authentication
-  if (checkingAuth) {
+  // Show loading while checking authentication or processing join
+  if (checkingAuth || processingJoin) {
     return (
       <div className="min-h-screen bg-black text-green-400 font-mono flex items-center justify-center p-2 sm:p-4">
         <div className="text-center">
-          <p className="text-xs sm:text-sm">{">"} CHECKING AUTHENTICATION...</p>
+          <p className="text-xs sm:text-sm">
+            {">"} {processingJoin ? "JOINING CHAT..." : "CHECKING AUTHENTICATION..."}
+          </p>
           <div className="terminal-cursor-block animate-pulse mt-2">█</div>
         </div>
       </div>
