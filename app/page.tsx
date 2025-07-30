@@ -21,6 +21,7 @@ export default function LoginPage() {
   const [showForm, setShowForm] = useState(false)
   const [checkingAuth, setCheckingAuth] = useState(true)
   const [needsVerification, setNeedsVerification] = useState(false)
+  const [pendingJoinCode, setPendingJoinCode] = useState("")
   const router = useRouter()
   const searchParams = useSearchParams()
   const supabase = createClient()
@@ -45,10 +46,17 @@ export default function LoginPage() {
   }, [isLogin])
 
   useEffect(() => {
-    // Check for URL parameters (errors or success messages)
+    // Check for URL parameters (errors, success messages, join codes)
     const urlError = searchParams.get("error")
     const urlMessage = searchParams.get("message")
     const verified = searchParams.get("verified")
+    const joinCode = searchParams.get("join")
+
+    // Handle join code
+    if (joinCode) {
+      setPendingJoinCode(joinCode)
+      setSuccess(`You've been invited to join a chat! Please login or register to continue.`)
+    }
 
     if (urlError && urlMessage) {
       setError(urlMessage)
@@ -88,7 +96,8 @@ export default function LoginPage() {
 
     // Clear URL parameters after processing
     if (urlError || urlMessage || verified) {
-      window.history.replaceState({}, "", "/")
+      const newUrl = joinCode ? `/?join=${joinCode}` : "/"
+      window.history.replaceState({}, "", newUrl)
     }
 
     // Check if user is already logged in
@@ -123,7 +132,12 @@ export default function LoginPage() {
             session.user.app_metadata?.email_verified === true
 
           if (isEmailVerified) {
-            router.push("/terminal")
+            // If there's a pending join code, redirect to join page
+            if (joinCode) {
+              router.push(`/join/${joinCode}`)
+            } else {
+              router.push("/terminal")
+            }
             return
           } else {
             setError("Please verify your email before logging in")
@@ -147,7 +161,12 @@ export default function LoginPage() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === "SIGNED_IN" && session?.user?.email_confirmed_at) {
-        router.push("/terminal")
+        // If there's a pending join code, redirect to join page
+        if (pendingJoinCode) {
+          router.push(`/join/${pendingJoinCode}`)
+        } else {
+          router.push("/terminal")
+        }
       } else if (event === "SIGNED_IN" && session?.user && !session.user.email_confirmed_at) {
         setError("Please verify your email before logging in")
         setNeedsVerification(true)
@@ -161,7 +180,7 @@ export default function LoginPage() {
     return () => {
       subscription.unsubscribe()
     }
-  }, [router, supabase.auth, searchParams])
+  }, [router, supabase.auth, searchParams, pendingJoinCode])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -292,6 +311,18 @@ export default function LoginPage() {
             {/* Animated System Messages */}
             <TerminalTypewriter lines={systemLines} speed={30} delay={300} className="mb-4" />
 
+            {/* Join Code Notice */}
+            {pendingJoinCode && (
+              <div className="text-green-400 text-xs sm:text-sm p-2 sm:p-3 border border-green-400 bg-gray-900 mb-4">
+                <p>
+                  {">"} CHAT INVITE DETECTED: {pendingJoinCode}
+                </p>
+                <p className="text-yellow-400 mt-1">
+                  {">"} You'll be automatically joined to the chat after authentication
+                </p>
+              </div>
+            )}
+
             {error && (
               <div className="text-red-400 text-xs sm:text-sm p-2 sm:p-3 border border-red-400 bg-gray-900">
                 <p>
@@ -333,6 +364,11 @@ export default function LoginPage() {
                   <p className="text-green-600 mt-3 break-all">
                     {">"} Email sent to: {email}
                   </p>
+                  {pendingJoinCode && (
+                    <p className="text-yellow-400 mt-3">
+                      {">"} After verification, you'll be automatically joined to chat: {pendingJoinCode}
+                    </p>
+                  )}
                   <p className="text-yellow-400 mt-3 text-xs">
                     {">"} IMPORTANT: Click the verification link within 1 hour
                   </p>
@@ -427,6 +463,7 @@ export default function LoginPage() {
               <p>{">"} ENCRYPTION: AES-256 End-to-End</p>
               <p>{">"} DOMAIN: TERMNL.APP - SSL Secured</p>
               <p>{">"} TIP: Click verification links quickly (they expire in 1 hour)</p>
+              {pendingJoinCode && <p>{">"} PENDING: Auto-join to chat after authentication</p>}
             </div>
           </div>
         </div>
