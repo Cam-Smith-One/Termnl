@@ -6,6 +6,7 @@ import { useState, useEffect, useRef } from "react"
 import { useRouter, useParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { encryptMessage, decryptMessage } from "@/lib/encryption"
+import { getInviteBaseUrl } from "@/lib/constants"
 import type { Database } from "@/lib/supabase/types"
 import { TerminalInput } from "@/components/terminal-input"
 
@@ -41,6 +42,7 @@ export default function ChatPage() {
   const [showAsciiMenu, setShowAsciiMenu] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
+  const [copySuccess, setCopySuccess] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
   const params = useParams()
@@ -308,9 +310,19 @@ export default function ChatPage() {
     }
   }
 
-  const copyInviteUrl = () => {
-    if (chat?.invite_url) {
-      navigator.clipboard.writeText(chat.invite_url)
+  const copyInviteUrl = async () => {
+    if (chat?.invite_code) {
+      try {
+        // Always use the production domain for invite URLs
+        const inviteUrl = `${getInviteBaseUrl()}/join/${chat.invite_code}`
+        await navigator.clipboard.writeText(inviteUrl)
+        setCopySuccess(true)
+        setTimeout(() => setCopySuccess(false), 2000)
+        console.log("Copied invite URL:", inviteUrl)
+      } catch (err) {
+        console.error("Failed to copy invite URL:", err)
+        setError("Failed to copy invite URL")
+      }
     }
   }
 
@@ -392,9 +404,13 @@ export default function ChatPage() {
               <span className="hidden sm:inline">INVITE: {chat?.invite_code}</span>
               <button
                 onClick={copyInviteUrl}
-                className="bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-2 sm:px-3 py-1 transition-colors uppercase tracking-wider text-[10px] sm:text-xs"
+                className={`bg-black border-2 ${
+                  copySuccess
+                    ? "border-yellow-400 text-yellow-400"
+                    : "border-green-400 text-green-400 hover:bg-green-400 hover:text-black"
+                } font-mono px-2 sm:px-3 py-1 transition-colors uppercase tracking-wider text-[10px] sm:text-xs`}
               >
-                [COPY]
+                {copySuccess ? "[COPIED!]" : "[COPY]"}
               </button>
               {isOwner ? (
                 <span className="text-yellow-400 font-mono text-[10px] sm:text-xs">[OWNER]</span>
@@ -563,7 +579,7 @@ export default function ChatPage() {
         <div className="text-[10px] sm:text-xs text-green-600 mt-4 pt-2 border-t border-green-400">
           <p>{">"} Press ENTER to send message | Use ASCII button for emojis</p>
           <p className="break-all">
-            {">"} Share code "{chat?.invite_code}" to invite others
+            {">"} Share code "{chat?.invite_code}" or URL: {getInviteBaseUrl()}/join/{chat?.invite_code}
           </p>
           <p>{">"} All messages are encrypted end-to-end</p>
         </div>

@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { generateSecureInviteCode, generateEncryptionKey } from "@/lib/encryption"
-import { getBaseUrl } from "@/lib/constants"
+import { getInviteBaseUrl } from "@/lib/constants"
 import type { Database } from "@/lib/supabase/types"
 import { TerminalInput } from "@/components/terminal-input"
 
@@ -207,12 +207,14 @@ export default function TerminalPage() {
 
       const inviteCode = generateSecureInviteCode()
       const encryptionKey = generateEncryptionKey()
-      const inviteUrl = `${getBaseUrl()}/join/${inviteCode}`
+      // Use the dedicated invite base URL function
+      const inviteUrl = `${getInviteBaseUrl()}/join/${inviteCode}`
 
       console.log("Creating chat with:", {
         name: newChatName + ".chat",
         owner_id: user.id,
         invite_code: inviteCode,
+        invite_url: inviteUrl,
       })
 
       const { data, error } = await supabase

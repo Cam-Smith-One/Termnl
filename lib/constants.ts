@@ -8,17 +8,24 @@ export const SITE_CONFIG = {
 }
 
 export const getBaseUrl = () => {
-  if (typeof window !== "undefined") {
-    return window.location.origin
-  }
-
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}`
-  }
-
+  // Always use the production domain for invite URLs
   if (process.env.NODE_ENV === "production") {
     return "https://termnl.app"
   }
 
-  return "http://localhost:3000"
+  // For development, check if we're running locally
+  if (typeof window !== "undefined") {
+    const hostname = window.location.hostname
+    if (hostname === "localhost" || hostname === "127.0.0.1") {
+      return "http://localhost:3000"
+    }
+  }
+
+  // Default to production domain for any other case (including preview deployments)
+  return "https://termnl.app"
+}
+
+export const getInviteBaseUrl = () => {
+  // Always use the production domain for invite URLs, regardless of environment
+  return "https://termnl.app"
 }
