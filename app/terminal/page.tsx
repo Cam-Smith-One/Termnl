@@ -77,7 +77,8 @@ export default function TerminalPage() {
         setLoading(false)
       } catch (err) {
         console.error("Terminal page - auth error:", err)
-        router.push("/")
+        setError("Failed to authenticate. Please try refreshing the page.")
+        setLoading(false)
       }
     }
 
@@ -86,53 +87,90 @@ export default function TerminalPage() {
 
   const loadChats = async (userId: string) => {
     try {
-      // Get chats where user is owner or participant
-      const { data: ownedChats, error: ownedError } = await supabase.from("chats").select("*").eq("owner_id", userId)
+      console.log("Loading chats for user:", userId)
 
-      if (ownedError) {
-        console.error("Error loading owned chats:", ownedError)
+      // Try to load owned chats with retry logic
+      let ownedChats: any[] = []
+      try {
+        const { data, error } = await supabase.from("chats").select("*").eq("owner_id", userId)
+
+        if (error) {
+          console.error("Error loading owned chats:", error)
+          // Don't throw here, just log and continue
+        } else {
+          ownedChats = data || []
+          console.log("Owned chats loaded:", ownedChats.length)
+        }
+      } catch (fetchError) {
+        console.error("Network error loading owned chats:", fetchError)
+        // Continue with empty array
       }
 
-      const { data: participantChats, error: participantError } = await supabase
-        .from("chat_participants")
-        .select(`
-          chats (*)
-        `)
-        .eq("user_id", userId)
+      // Try to load participant chats
+      let participantChats: any[] = []
+      try {
+        const { data: participantData, error: participantError } = await supabase
+          .from("chat_participants")
+          .select("chat_id")
+          .eq("user_id", userId)
 
-      if (participantError) {
-        console.error("Error loading participant chats:", participantError)
+        if (participantError) {
+          console.error("Error loading participant data:", participantError)
+        } else if (participantData && participantData.length > 0) {
+          const chatIds = participantData.map((p) => p.chat_id)
+          const { data: chatData, error: chatError } = await supabase.from("chats").select("*").in("id", chatIds)
+
+          if (chatError) {
+            console.error("Error loading participant chats:", chatError)
+          } else {
+            participantChats = chatData || []
+            console.log("Participant chats loaded:", participantChats.length)
+          }
+        }
+      } catch (fetchError) {
+        console.error("Network error loading participant chats:", fetchError)
+        // Continue with empty array
       }
 
-      console.log("Chats data:", {
-        ownedChats: ownedChats || [],
-        participantChats: participantChats || [],
-      })
-
-      const allChats = [...(ownedChats || []), ...(participantChats?.map((p) => p.chats).filter(Boolean) || [])]
-
-      // Remove duplicates and add participant counts
+      // Combine and deduplicate chats
+      const allChats = [...ownedChats, ...participantChats]
       const uniqueChats = allChats.filter((chat, index, self) => index === self.findIndex((c) => c.id === chat.id))
 
-      // Get participant counts for each chat
+      console.log("All unique chats:", uniqueChats.length)
+
+      // Get participant counts for each chat (with error handling)
       const chatsWithCounts = await Promise.all(
         uniqueChats.map(async (chat) => {
-          const { count } = await supabase
-            .from("chat_participants")
-            .select("*", { count: "exact", head: true })
-            .eq("chat_id", chat.id)
+          try {
+            const { count } = await supabase
+              .from("chat_participants")
+              .select("*", { count: "exact", head: true })
+              .eq("chat_id", chat.id)
 
-          return {
-            ...chat,
-            participants_count: (count || 0) + 1, // +1 for owner
+            return {
+              ...chat,
+              participants_count: (count || 0) + 1, // +1 for owner
+            }
+          } catch (countError) {
+            console.error("Error getting participant count for chat:", chat.id, countError)
+            return {
+              ...chat,
+              participants_count: 1, // Default to 1 (owner only)
+            }
           }
         }),
       )
 
+      console.log("Chats with counts:", chatsWithCounts.length)
       setChats(chatsWithCounts)
+
+      // Clear any previous errors if we successfully loaded chats
+      if (error && chatsWithCounts.length >= 0) {
+        setError("")
+      }
     } catch (err) {
       console.error("Failed to load chats:", err)
-      setError("Failed to load chats")
+      setError("Failed to load chats. Please check your connection and try refreshing.")
     }
   }
 
@@ -140,34 +178,41 @@ export default function TerminalPage() {
     if (!newChatName.trim() || !user) return
 
     try {
-      setLoading(true)
       setError("")
+      const createLoading = true
 
-      // First check if the user profile exists
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", user.id)
-        .single()
+      // First ensure the user profile exists
+      try {
+        const { data: profile, error: profileError } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", user.id)
+          .single()
 
-      if (profileError) {
-        console.error("Profile error:", profileError)
+        if (profileError && profileError.code === "PGRST116") {
+          // Profile doesn't exist, create it
+          const username = user.user_metadata?.username || user.email?.split("@")[0] || "user"
 
-        // Try to create the profile if it doesn't exist
-        const username = user.user_metadata?.username || user.email?.split("@")[0] || "user"
+          const { error: insertError } = await supabase.from("profiles").insert({
+            id: user.id,
+            username: username,
+            email: user.email || "",
+          })
 
-        const { error: insertError } = await supabase.from("profiles").insert({
-          id: user.id,
-          username: username,
-          email: user.email || "",
-        })
-
-        if (insertError) {
-          console.error("Failed to create profile:", insertError)
-          setError("Failed to create user profile. Please try logging out and back in.")
-          setLoading(false)
+          if (insertError) {
+            console.error("Failed to create profile:", insertError)
+            setError("Failed to create user profile. Please try logging out and back in.")
+            return
+          }
+        } else if (profileError) {
+          console.error("Profile check error:", profileError)
+          setError("Failed to verify user profile. Please try again.")
           return
         }
+      } catch (profileFetchError) {
+        console.error("Network error checking profile:", profileFetchError)
+        setError("Network error. Please check your connection and try again.")
+        return
       }
 
       const inviteCode = generateSecureInviteCode()
@@ -178,7 +223,6 @@ export default function TerminalPage() {
         name: newChatName + ".chat",
         owner_id: user.id,
         invite_code: inviteCode,
-        invite_url: inviteUrl,
       })
 
       const { data, error } = await supabase
@@ -195,7 +239,8 @@ export default function TerminalPage() {
 
       if (error) {
         console.error("Chat creation error:", error)
-        throw error
+        setError(`Failed to create chat: ${error.message}`)
+        return
       }
 
       console.log("Chat created:", data)
@@ -206,9 +251,7 @@ export default function TerminalPage() {
       setSuccess(`Chat "${newChatName}.chat" created successfully!`)
     } catch (err) {
       console.error("Failed to create chat:", err)
-      setError("Failed to create chat. Please try again.")
-    } finally {
-      setLoading(false)
+      setError("Failed to create chat. Please check your connection and try again.")
     }
   }
 
@@ -216,7 +259,6 @@ export default function TerminalPage() {
     if (!joinCode.trim() || !user) return
 
     try {
-      setLoading(true)
       setError("")
 
       // Find chat by invite code
@@ -227,8 +269,7 @@ export default function TerminalPage() {
         .single()
 
       if (chatError || !chat) {
-        setError("Invalid invite code")
-        setLoading(false)
+        setError("Invalid invite code or chat not found")
         return
       }
 
@@ -242,7 +283,6 @@ export default function TerminalPage() {
 
       if (existing || chat.owner_id === user.id) {
         setError("You are already in this chat")
-        setLoading(false)
         return
       }
 
@@ -252,7 +292,11 @@ export default function TerminalPage() {
         user_id: user.id,
       })
 
-      if (joinError) throw joinError
+      if (joinError) {
+        console.error("Join error:", joinError)
+        setError(`Failed to join chat: ${joinError.message}`)
+        return
+      }
 
       await loadChats(user.id)
       setJoinCode("")
@@ -260,9 +304,7 @@ export default function TerminalPage() {
       setSuccess(`Successfully joined "${chat.name}"!`)
     } catch (err) {
       console.error("Failed to join chat:", err)
-      setError("Failed to join chat")
-    } finally {
-      setLoading(false)
+      setError("Failed to join chat. Please check your connection and try again.")
     }
   }
 
@@ -273,6 +315,15 @@ export default function TerminalPage() {
   const logout = async () => {
     await supabase.auth.signOut()
     router.push("/")
+  }
+
+  const retryLoadChats = async () => {
+    if (user) {
+      setError("")
+      setLoading(true)
+      await loadChats(user.id)
+      setLoading(false)
+    }
   }
 
   if (loading) {
@@ -346,12 +397,20 @@ export default function TerminalPage() {
                 <p>
                   {">"} ERROR: {error}
                 </p>
-                <button
-                  onClick={() => setError("")}
-                  className="mt-2 bg-black border-2 border-red-400 text-red-400 hover:bg-red-400 hover:text-black font-mono px-2 py-1 text-xs transition-colors uppercase tracking-wider"
-                >
-                  [DISMISS]
-                </button>
+                <div className="flex gap-2 mt-2">
+                  <button
+                    onClick={() => setError("")}
+                    className="bg-black border-2 border-red-400 text-red-400 hover:bg-red-400 hover:text-black font-mono px-2 py-1 text-xs transition-colors uppercase tracking-wider"
+                  >
+                    [DISMISS]
+                  </button>
+                  <button
+                    onClick={retryLoadChats}
+                    className="bg-black border-2 border-yellow-400 text-yellow-400 hover:bg-yellow-400 hover:text-black font-mono px-2 py-1 text-xs transition-colors uppercase tracking-wider"
+                  >
+                    [RETRY]
+                  </button>
+                </div>
               </div>
             )}
 
@@ -385,15 +444,13 @@ export default function TerminalPage() {
                   <div className="flex flex-col sm:flex-row gap-2">
                     <button
                       onClick={createChat}
-                      disabled={loading}
-                      className="w-full sm:w-auto bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm disabled:opacity-50"
+                      className="w-full sm:w-auto bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm"
                     >
-                      {loading ? "[CREATING...]" : "[CREATE]"}
+                      [CREATE]
                     </button>
                     <button
                       onClick={() => setShowCreateChat(false)}
-                      disabled={loading}
-                      className="w-full sm:w-auto bg-black border-2 border-red-400 text-red-400 hover:bg-red-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm disabled:opacity-50"
+                      className="w-full sm:w-auto bg-black border-2 border-red-400 text-red-400 hover:bg-red-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm"
                     >
                       [CANCEL]
                     </button>
@@ -416,15 +473,13 @@ export default function TerminalPage() {
                   <div className="flex flex-col sm:flex-row gap-2">
                     <button
                       onClick={joinChat}
-                      disabled={loading}
-                      className="w-full sm:w-auto bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm disabled:opacity-50"
+                      className="w-full sm:w-auto bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm"
                     >
-                      {loading ? "[JOINING...]" : "[JOIN]"}
+                      [JOIN]
                     </button>
                     <button
                       onClick={() => setShowJoinChat(false)}
-                      disabled={loading}
-                      className="w-full sm:w-auto bg-black border-2 border-red-400 text-red-400 hover:bg-red-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm disabled:opacity-50"
+                      className="w-full sm:w-auto bg-black border-2 border-red-400 text-red-400 hover:bg-red-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm"
                     >
                       [CANCEL]
                     </button>
@@ -485,7 +540,7 @@ export default function TerminalPage() {
               <p>{">"} Use CREATE CHAT to start a new conversation</p>
               <p>{">"} Use JOIN CHAT to join an existing room with a code</p>
               <p>{">"} Click on any chat file to enter the room</p>
-              <p>{">"} All messages are end-to-end encrypted</p>
+              <p>{">"} All messages are encrypted end-to-end</p>
               <p>{">"} Share TERMNL.APP with friends to join the network</p>
             </div>
           </div>

@@ -48,25 +48,43 @@ export default function ChatPage() {
 
   useEffect(() => {
     const initializeChat = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
 
-      const isEmailVerified =
-        session?.user?.email_confirmed_at ||
-        session?.user?.confirmed_at ||
-        session?.user?.user_metadata?.email_verified === true ||
-        session?.user?.app_metadata?.email_verified === true
+        const isEmailVerified =
+          session?.user?.email_confirmed_at ||
+          session?.user?.confirmed_at ||
+          session?.user?.user_metadata?.email_verified === true ||
+          session?.user?.app_metadata?.email_verified === true
 
-      if (!session?.user || !isEmailVerified) {
-        router.push("/")
-        return
+        if (!session?.user || !isEmailVerified) {
+          router.push("/")
+          return
+        }
+
+        console.log("Chat page - User authenticated:", {
+          userId: session.user.id,
+          chatId: params.id,
+        })
+
+        setUser(session.user)
+        await loadChat(session.user.id, params.id as string)
+        setLoading(false)
+      } catch (err) {
+        console.error("Chat initialization error:", err)
+        setError("Failed to initialize chat. Please check your connection.")
+        setLoading(false)
       }
+    }
 
-      setUser(session.user)
-      await loadChat(session.user.id, params.id as string)
-      await loadMessages(params.id as string)
-      setLoading(false)
+    initializeChat()
+  }, [router, params.id, supabase])
+
+  useEffect(() => {
+    if (chat && user) {
+      loadMessages(params.id as string)
 
       // Set up real-time subscription for messages
       const channel = supabase
@@ -80,6 +98,7 @@ export default function ChatPage() {
             filter: `chat_id=eq.${params.id}`,
           },
           (payload) => {
+            console.log("New message received:", payload)
             loadMessages(params.id as string)
           },
         )
@@ -89,9 +108,7 @@ export default function ChatPage() {
         supabase.removeChannel(channel)
       }
     }
-
-    initializeChat()
-  }, [router, params.id, supabase])
+  }, [chat, user, params.id, supabase])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -99,36 +116,72 @@ export default function ChatPage() {
 
   const loadChat = async (userId: string, chatId: string) => {
     try {
-      const { data, error } = await supabase.from("chats").select("*").eq("id", chatId).single()
+      console.log("Loading chat:", { userId, chatId })
 
-      if (error || !data) {
+      // First, try to get the chat directly
+      const { data: chatData, error: chatError } = await supabase.from("chats").select("*").eq("id", chatId).single()
+
+      console.log("Chat query result:", { chatData, chatError })
+
+      if (chatError) {
+        console.error("Chat query error:", chatError)
+
+        if (chatError.code === "PGRST116") {
+          setError("Chat not found or you don't have access to it")
+        } else {
+          setError(`Failed to load chat: ${chatError.message}`)
+        }
+        return
+      }
+
+      if (!chatData) {
         setError("Chat not found")
         return
       }
 
-      // Check if user has access to this chat
-      const isOwner = data.owner_id === userId
-      const { data: participant } = await supabase
-        .from("chat_participants")
-        .select("*")
-        .eq("chat_id", chatId)
-        .eq("user_id", userId)
-        .single()
+      // Check if user is the owner
+      const isOwner = chatData.owner_id === userId
+      console.log("Is owner:", isOwner)
 
-      if (!isOwner && !participant) {
-        setError("Access denied")
+      // If not owner, check if user is a participant
+      let isParticipant = false
+      if (!isOwner) {
+        const { data: participantData, error: participantError } = await supabase
+          .from("chat_participants")
+          .select("*")
+          .eq("chat_id", chatId)
+          .eq("user_id", userId)
+          .single()
+
+        console.log("Participant check:", { participantData, participantError })
+
+        if (participantError && participantError.code !== "PGRST116") {
+          console.error("Error checking participant status:", participantError)
+        }
+
+        isParticipant = !!participantData
+      }
+
+      console.log("Access check:", { isOwner, isParticipant })
+
+      if (!isOwner && !isParticipant) {
+        setError("You don't have access to this chat")
         return
       }
 
-      setChat(data)
+      setChat(chatData)
       setIsOwner(isOwner)
+      console.log("Chat loaded successfully:", chatData.name)
     } catch (err) {
-      setError("Failed to load chat")
+      console.error("Failed to load chat:", err)
+      setError("Failed to load chat. Please check your connection.")
     }
   }
 
   const loadMessages = async (chatId: string) => {
     try {
+      console.log("Loading messages for chat:", chatId)
+
       const { data, error } = await supabase
         .from("messages")
         .select(`
@@ -138,11 +191,17 @@ export default function ChatPage() {
         .eq("chat_id", chatId)
         .order("created_at", { ascending: true })
 
-      if (error) throw error
+      console.log("Messages query result:", { messagesCount: data?.length, error })
+
+      if (error) {
+        console.error("Error loading messages:", error)
+        return
+      }
 
       setMessages(data || [])
     } catch (err) {
-      setError("Failed to load messages")
+      console.error("Failed to load messages:", err)
+      // Don't set error here as it's not critical
     }
   }
 
@@ -152,6 +211,12 @@ export default function ChatPage() {
     try {
       const encryptedContent = encryptMessage(newMessage, chat.encryption_key)
 
+      console.log("Sending message:", {
+        chatId: chat.id,
+        userId: user.id,
+        messageLength: newMessage.length,
+      })
+
       const { error } = await supabase.from("messages").insert({
         chat_id: chat.id,
         user_id: user.id,
@@ -159,11 +224,17 @@ export default function ChatPage() {
         message_type: "text",
       })
 
-      if (error) throw error
+      if (error) {
+        console.error("Send message error:", error)
+        setError(`Failed to send message: ${error.message}`)
+        return
+      }
 
       setNewMessage("")
+      console.log("Message sent successfully")
     } catch (err) {
-      setError("Failed to send message")
+      console.error("Failed to send message:", err)
+      setError("Failed to send message. Please check your connection.")
     }
   }
 
@@ -181,11 +252,16 @@ export default function ChatPage() {
         message_type: "ascii",
       })
 
-      if (error) throw error
+      if (error) {
+        console.error("Send emoji error:", error)
+        setError(`Failed to send emoji: ${error.message}`)
+        return
+      }
 
       setShowAsciiMenu(false)
     } catch (err) {
-      setError("Failed to send emoji")
+      console.error("Failed to send emoji:", err)
+      setError("Failed to send emoji. Please check your connection.")
     }
   }
 
@@ -198,13 +274,18 @@ export default function ChatPage() {
         .update({ name: newChatName + ".chat" })
         .eq("id", chat.id)
 
-      if (error) throw error
+      if (error) {
+        console.error("Rename error:", error)
+        setError(`Failed to rename chat: ${error.message}`)
+        return
+      }
 
       setChat({ ...chat, name: newChatName + ".chat" })
       setNewChatName("")
       setIsRenaming(false)
     } catch (err) {
-      setError("Failed to rename chat")
+      console.error("Failed to rename chat:", err)
+      setError("Failed to rename chat. Please check your connection.")
     }
   }
 
@@ -214,11 +295,16 @@ export default function ChatPage() {
     try {
       const { error } = await supabase.from("chat_participants").delete().eq("chat_id", chat.id).eq("user_id", user.id)
 
-      if (error) throw error
+      if (error) {
+        console.error("Leave chat error:", error)
+        setError(`Failed to leave chat: ${error.message}`)
+        return
+      }
 
       router.push("/terminal")
     } catch (err) {
-      setError("Failed to leave chat")
+      console.error("Failed to leave chat:", err)
+      setError("Failed to leave chat. Please check your connection.")
     }
   }
 
@@ -235,12 +321,21 @@ export default function ChatPage() {
     }
   }
 
+  const retryLoadChat = async () => {
+    if (user) {
+      setError("")
+      setLoading(true)
+      await loadChat(user.id, params.id as string)
+      setLoading(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-black text-green-400 font-mono flex items-center justify-center">
         <div className="text-center">
           <p>{">"} LOADING CHAT...</p>
-          <div className="animate-pulse mt-2">█</div>
+          <div className="terminal-cursor-block mt-2">█</div>
         </div>
       </div>
     )
@@ -248,17 +343,37 @@ export default function ChatPage() {
 
   if (error && !chat) {
     return (
-      <div className="min-h-screen bg-black text-green-400 font-mono flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-red-400">
+      <div className="min-h-screen bg-black text-green-400 font-mono flex items-center justify-center p-4">
+        <div className="text-center max-w-2xl">
+          <p className="text-red-400 mb-4">
             {">"} ERROR: {error}
           </p>
-          <button
-            onClick={() => router.push("/terminal")}
-            className="mt-4 bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-4 py-2 transition-colors uppercase tracking-wider"
-          >
-            [BACK TO TERMINAL]
-          </button>
+          <div className="text-xs text-green-600 mb-6">
+            <p>
+              {">"} Chat ID: {params.id}
+            </p>
+            <p>
+              {">"} User ID: {user?.id}
+            </p>
+            <p>{">"} This might be due to:</p>
+            <p>{">"} - Chat was deleted</p>
+            <p>{">"} - You don't have permission to access this chat</p>
+            <p>{">"} - Database connection issues</p>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-4 justify-center">
+            <button
+              onClick={() => router.push("/terminal")}
+              className="bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-4 py-2 transition-colors uppercase tracking-wider"
+            >
+              [BACK TO TERMINAL]
+            </button>
+            <button
+              onClick={retryLoadChat}
+              className="bg-black border-2 border-yellow-400 text-yellow-400 hover:bg-yellow-400 hover:text-black font-mono px-4 py-2 transition-colors uppercase tracking-wider"
+            >
+              [RETRY]
+            </button>
+          </div>
         </div>
       </div>
     )
