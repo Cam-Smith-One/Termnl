@@ -26,6 +26,26 @@ export const getBaseUrl = () => {
 }
 
 export const getInviteBaseUrl = () => {
-  // Always use the production domain for invite URLs, regardless of environment
+  // For production, always use the production domain
+  if (process.env.NODE_ENV === "production") {
+    return "https://termnl.app"
+  }
+
+  // For development, check current location
+  if (typeof window !== "undefined") {
+    const { protocol, hostname, port } = window.location
+
+    // If we're on localhost or 127.0.0.1, use local URL
+    if (hostname === "localhost" || hostname === "127.0.0.1") {
+      return `${protocol}//${hostname}${port ? `:${port}` : ""}`
+    }
+
+    // If we're on a preview deployment, use current origin
+    if (hostname.includes("vercel.app") || hostname.includes("netlify.app")) {
+      return `${protocol}//${hostname}`
+    }
+  }
+
+  // Default fallback to production
   return "https://termnl.app"
 }

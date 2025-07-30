@@ -25,6 +25,8 @@ export default function TerminalPage() {
   const [joinLoading, setJoinLoading] = useState(false)
   const [error, setError] = useState("")
   const [success, setSuccess] = useState("")
+  const [connectionStatus, setConnectionStatus] = useState<"connected" | "connecting" | "disconnected">("connected")
+  const [retryAttempts, setRetryAttempts] = useState(0)
   const router = useRouter()
   const searchParams = useSearchParams()
   const supabase = createClient()
@@ -40,6 +42,8 @@ export default function TerminalPage() {
 
     const getUser = async () => {
       try {
+        setConnectionStatus("connecting")
+
         const {
           data: { session },
           error: sessionError,
@@ -47,11 +51,13 @@ export default function TerminalPage() {
 
         if (sessionError) {
           console.error("Terminal page - session error:", sessionError)
+          setConnectionStatus("disconnected")
           router.push("/")
           return
         }
 
         if (!session?.user) {
+          setConnectionStatus("disconnected")
           router.push("/")
           return
         }
@@ -64,6 +70,7 @@ export default function TerminalPage() {
           session.user.app_metadata?.email_verified === true
 
         if (!isEmailVerified) {
+          setConnectionStatus("disconnected")
           router.push("/?error=email_not_verified")
           return
         }
@@ -75,11 +82,13 @@ export default function TerminalPage() {
         })
 
         setUser(session.user)
+        setConnectionStatus("connected")
         await loadChats(session.user.id)
         setLoading(false)
       } catch (err) {
         console.error("Terminal page - auth error:", err)
-        setError("Failed to authenticate. Please try refreshing the page.")
+        setConnectionStatus("disconnected")
+        setError("Failed to authenticate. Please check your connection and try refreshing the page.")
         setLoading(false)
       }
     }
@@ -87,45 +96,190 @@ export default function TerminalPage() {
     getUser()
   }, [router, supabase.auth, searchParams])
 
-  // Load chats using the secure function
-  const loadChats = async (userId: string) => {
+  // Enhanced loadChats function with retry logic and better error handling
+  const loadChats = async (userId: string, retryCount = 0) => {
+    const maxRetries = 3
+    const retryDelay = Math.min(1000 * Math.pow(2, retryCount), 5000) // Exponential backoff, max 5s
+
     try {
-      console.log("Loading chats for user:", userId)
+      console.log(`Loading chats for user: ${userId} (attempt ${retryCount + 1}/${maxRetries + 1})`)
 
-      const { data: chatsData, error: chatsError } = await supabase.rpc("get_user_chats", {
-        input_user_id: userId,
-      })
-
-      if (chatsError) {
-        console.error("Error loading chats:", chatsError)
-        setError("Failed to load chats. Please check your connection and try refreshing.")
-        return
+      if (retryCount > 0) {
+        setConnectionStatus("connecting")
+        await new Promise((resolve) => setTimeout(resolve, retryDelay))
       }
 
-      console.log("Chats loaded:", chatsData?.length || 0)
+      // Test basic connectivity first
+      try {
+        const healthResponse = await fetch("/api/health", {
+          method: "GET",
+          headers: { "Content-Type": "application/json" },
+        })
 
-      // Transform the data to match our expected format
-      const transformedChats = (chatsData || []).map((chat) => ({
-        id: chat.id,
-        name: chat.name,
-        owner_id: chat.owner_id,
-        invite_code: chat.invite_code,
-        invite_url: chat.invite_url,
-        encryption_key: chat.encryption_key,
-        created_at: chat.created_at,
-        updated_at: chat.updated_at,
-        participants_count: chat.participants_count,
-      }))
+        if (!healthResponse.ok) {
+          throw new Error(`Health check failed: ${healthResponse.status}`)
+        }
 
-      setChats(transformedChats)
+        console.log("Health check passed")
+      } catch (healthError) {
+        console.error("Health check failed:", healthError)
 
-      // Clear any previous errors if we successfully loaded chats
+        if (retryCount < maxRetries) {
+          console.log(`Health check failed, retrying in ${retryDelay}ms...`)
+          setRetryAttempts(retryCount + 1)
+          return loadChats(userId, retryCount + 1)
+        } else {
+          throw new Error("Cannot connect to server. Please check your internet connection.")
+        }
+      }
+
+      // Try to load chats with timeout
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Request timeout")), 15000))
+
+      // First, try using the secure function with timeout
+      try {
+        console.log("Attempting to load chats via secure function...")
+
+        const functionPromise = supabase.rpc("get_user_chats", {
+          input_user_id: userId,
+        })
+
+        const { data: userChats, error: functionError } = (await Promise.race([functionPromise, timeoutPromise])) as any
+
+        if (!functionError && userChats) {
+          console.log("Chats loaded via function:", userChats.length)
+          const formattedChats = userChats.map((chat: any) => ({
+            id: chat.id,
+            name: chat.name,
+            owner_id: chat.owner_id,
+            invite_code: chat.invite_code,
+            invite_url: chat.invite_url,
+            encryption_key: chat.encryption_key,
+            created_at: chat.created_at,
+            updated_at: chat.updated_at,
+            participants_count: chat.participants_count || 1,
+          }))
+          setChats(formattedChats)
+          setConnectionStatus("connected")
+          setRetryAttempts(0)
+          if (error) setError("") // Clear any previous errors
+          return
+        } else {
+          console.log("Function failed, falling back to direct queries:", functionError)
+        }
+      } catch (funcErr) {
+        console.log("Function call failed, using fallback:", funcErr)
+      }
+
+      // Fallback: Use direct database queries with timeout
+      console.log("Using direct database queries as fallback...")
+
+      // Get owned chats with timeout
+      const ownedChatsPromise = supabase
+        .from("chats")
+        .select("*")
+        .eq("owner_id", userId)
+        .order("created_at", { ascending: false })
+
+      const { data: ownedChats, error: ownedError } = (await Promise.race([ownedChatsPromise, timeoutPromise])) as any
+
+      if (ownedError) {
+        console.error("Error loading owned chats:", ownedError)
+        throw new Error(`Failed to load your chats: ${ownedError.message}`)
+      }
+
+      console.log("Owned chats loaded:", ownedChats?.length || 0)
+
+      // Get participated chats - with timeout and error handling
+      let participatedChats: any[] = []
+      try {
+        console.log("Loading participated chats...")
+
+        const participantPromise = supabase.from("chat_participants").select("chat_id").eq("user_id", userId)
+
+        const { data: participantData, error: participatedError } = (await Promise.race([
+          participantPromise,
+          timeoutPromise,
+        ])) as any
+
+        if (participatedError) {
+          console.error("Error loading participant data:", participatedError)
+          // Don't throw here, just log and continue with owned chats only
+        } else if (participantData && participantData.length > 0) {
+          // Get the actual chat data for participated chats
+          const chatIds = participantData.map((p: any) => p.chat_id)
+
+          const participatedChatsPromise = supabase
+            .from("chats")
+            .select("*")
+            .in("id", chatIds)
+            .order("created_at", { ascending: false })
+
+          const { data: participatedChatData, error: chatDataError } = (await Promise.race([
+            participatedChatsPromise,
+            timeoutPromise,
+          ])) as any
+
+          if (chatDataError) {
+            console.error("Error loading participated chat data:", chatDataError)
+            // Don't throw, just continue without participated chats
+          } else {
+            participatedChats = participatedChatData || []
+            console.log("Participated chats loaded:", participatedChats.length)
+          }
+        }
+      } catch (participatedErr) {
+        console.error("Participated chats query failed:", participatedErr)
+        // Continue without participated chats
+      }
+
+      // Combine and format chats
+      const allChats = [
+        ...(ownedChats || []).map((chat: any) => ({ ...chat, participants_count: 1 })),
+        ...participatedChats.map((chat: any) => ({ ...chat, participants_count: 1 })),
+      ]
+
+      // Remove duplicates (in case user owns and participates in same chat)
+      const uniqueChats = allChats.filter((chat, index, self) => index === self.findIndex((c) => c.id === chat.id))
+
+      console.log("Total unique chats loaded:", uniqueChats.length)
+      setChats(uniqueChats)
+      setConnectionStatus("connected")
+      setRetryAttempts(0)
+
+      // Clear any previous errors on success
       if (error) {
         setError("")
       }
     } catch (err) {
-      console.error("Failed to load chats:", err)
-      setError("Failed to load chats. Please check your connection and try refreshing.")
+      console.error(`Failed to load chats (attempt ${retryCount + 1}):`, err)
+
+      // Check if it's a network error
+      const isNetworkError =
+        err instanceof TypeError && (err.message.includes("fetch") || err.message.includes("network"))
+
+      const isTimeoutError = err instanceof Error && err.message.includes("timeout")
+
+      if ((isNetworkError || isTimeoutError) && retryCount < maxRetries) {
+        console.log(`Network/timeout error, retrying in ${retryDelay}ms... (attempt ${retryCount + 1}/${maxRetries})`)
+        setConnectionStatus("connecting")
+        setRetryAttempts(retryCount + 1)
+        return loadChats(userId, retryCount + 1)
+      } else {
+        // Final failure
+        setConnectionStatus("disconnected")
+        setRetryAttempts(0)
+
+        let errorMessage = "Failed to load chats. "
+
+        if (isNetworkError || isTimeoutError) {
+          errorMessage += "Please check your internet connection and try again."
+        } else {
+          errorMessage += `Error: ${err instanceof Error ? err.message : "Unknown error"}`
+        }
+
+        setError(errorMessage)
+      }
     }
   }
 
@@ -221,27 +375,78 @@ export default function TerminalPage() {
     try {
       console.log("Joining chat with code:", joinCode)
 
-      // Use the secure function to join chat
-      const { data: chatId, error } = await supabase.rpc("join_chat_by_code", {
-        input_invite_code: joinCode.toUpperCase(),
-        input_user_id: user.id,
-      })
+      // Try the secure function first
+      try {
+        const { data: chatId, error } = await supabase.rpc("join_chat_by_code", {
+          input_invite_code: joinCode.toUpperCase(),
+          input_user_id: user.id,
+        })
 
-      if (error) {
-        console.error("Join chat error:", error)
-        if (error.message.includes("Invalid invite code")) {
-          setError("Invalid invite code or chat not found")
-        } else if (error.message.includes("already in chat")) {
-          setError("You are already in this chat")
+        if (!error && chatId) {
+          console.log("Successfully joined chat via function:", chatId)
+          await loadChats(user.id)
+          setJoinCode("")
+          setShowJoinChat(false)
+          setSuccess("Successfully joined the chat!")
+          setJoinLoading(false)
+          return
         } else {
-          setError(`Failed to join chat: ${error.message}`)
+          console.log("Function failed, trying direct approach:", error)
         }
+      } catch (funcErr) {
+        console.log("Function call failed, using direct approach:", funcErr)
+      }
+
+      // Fallback: Direct database approach
+      console.log("Using direct database approach for joining...")
+
+      // Find chat by invite code
+      const { data: chatData, error: chatError } = await supabase
+        .from("chats")
+        .select("id, name, owner_id")
+        .eq("invite_code", joinCode.toUpperCase())
+        .single()
+
+      if (chatError || !chatData) {
+        setError("Invalid invite code or chat not found")
         setJoinLoading(false)
         return
       }
 
-      console.log("Successfully joined chat:", chatId)
+      // Check if already in chat
+      if (chatData.owner_id === user.id) {
+        setError("You are the owner of this chat")
+        setJoinLoading(false)
+        return
+      }
 
+      const { data: existingParticipant } = await supabase
+        .from("chat_participants")
+        .select("id")
+        .eq("chat_id", chatData.id)
+        .eq("user_id", user.id)
+        .single()
+
+      if (existingParticipant) {
+        setError("You are already in this chat")
+        setJoinLoading(false)
+        return
+      }
+
+      // Join the chat
+      const { error: joinError } = await supabase.from("chat_participants").insert({
+        chat_id: chatData.id,
+        user_id: user.id,
+      })
+
+      if (joinError) {
+        console.error("Join error:", joinError)
+        setError(`Failed to join chat: ${joinError.message}`)
+        setJoinLoading(false)
+        return
+      }
+
+      console.log("Successfully joined chat via direct approach")
       await loadChats(user.id)
       setJoinCode("")
       setShowJoinChat(false)
@@ -267,16 +472,49 @@ export default function TerminalPage() {
     if (user) {
       setError("")
       setLoading(true)
+      setRetryAttempts(0)
       await loadChats(user.id)
       setLoading(false)
     }
   }
 
+  // Monitor online/offline status
+  useEffect(() => {
+    const handleOnline = () => {
+      console.log("Connection restored")
+      setConnectionStatus("connected")
+      if (user && (error || connectionStatus === "disconnected")) {
+        console.log("Retrying after connection restored...")
+        retryLoadChats()
+      }
+    }
+
+    const handleOffline = () => {
+      console.log("Connection lost")
+      setConnectionStatus("disconnected")
+    }
+
+    window.addEventListener("online", handleOnline)
+    window.addEventListener("offline", handleOffline)
+
+    return () => {
+      window.removeEventListener("online", handleOnline)
+      window.removeEventListener("offline", handleOffline)
+    }
+  }, [user, error, connectionStatus])
+
   if (loading) {
     return (
       <div className="min-h-screen bg-black text-green-400 font-mono flex items-center justify-center p-2 sm:p-4">
         <div className="text-center">
-          <p className="text-xs sm:text-sm">{">"} LOADING TERMINAL...</p>
+          <p className="text-xs sm:text-sm">
+            {">"} {connectionStatus === "connecting" ? "CONNECTING TO TERMINAL..." : "LOADING TERMINAL..."}
+          </p>
+          {retryAttempts > 0 && (
+            <p className="text-xs text-green-600 mt-2">
+              {">"} Retry attempt {retryAttempts}/3...
+            </p>
+          )}
           <div className="terminal-cursor-block mt-2">█</div>
         </div>
       </div>
@@ -293,6 +531,17 @@ export default function TerminalPage() {
               <span className="ml-2 sm:ml-4 text-xs sm:text-sm truncate">TERMNL.APP - File Explorer</span>
             </div>
             <div className="flex items-center gap-2 sm:gap-4 text-xs sm:text-sm">
+              <span
+                className={`px-2 py-1 text-xs ${
+                  connectionStatus === "connected"
+                    ? "text-green-400"
+                    : connectionStatus === "connecting"
+                      ? "text-yellow-400"
+                      : "text-red-400"
+                }`}
+              >
+                [{connectionStatus.toUpperCase()}]
+              </span>
               <span className="hidden sm:inline">USER: {user?.user_metadata?.username || user?.email}</span>
               <span className="sm:hidden">USER</span>
               <button
@@ -304,6 +553,20 @@ export default function TerminalPage() {
             </div>
           </div>
         </div>
+
+        {/* Connection Status Banner */}
+        {connectionStatus !== "connected" && (
+          <div
+            className={`text-xs sm:text-sm p-2 border-x border-green-400 ${
+              connectionStatus === "connecting" ? "bg-yellow-900/20 text-yellow-400" : "bg-red-900/20 text-red-400"
+            }`}
+          >
+            <p>
+              {">"} CONNECTION STATUS: {connectionStatus.toUpperCase()}
+              {connectionStatus === "connecting" && retryAttempts > 0 && ` (Attempt ${retryAttempts}/3)`}
+            </p>
+          </div>
+        )}
 
         {/* Terminal Body */}
         <div className="bg-black border-green-400 border-t-0 rounded-t-none border p-3 sm:p-6 min-h-[600px]">
@@ -364,14 +627,14 @@ export default function TerminalPage() {
             <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 mb-6">
               <button
                 onClick={() => setShowCreateChat(!showCreateChat)}
-                disabled={createLoading}
+                disabled={createLoading || connectionStatus === "disconnected"}
                 className="w-full sm:w-auto bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm disabled:opacity-50"
               >
                 [CREATE CHAT]
               </button>
               <button
                 onClick={() => setShowJoinChat(!showJoinChat)}
-                disabled={joinLoading}
+                disabled={joinLoading || connectionStatus === "disconnected"}
                 className="w-full sm:w-auto bg-black border-2 border-green-400 text-green-400 hover:bg-green-400 hover:text-black font-mono px-3 sm:px-4 py-2 transition-colors uppercase tracking-wider text-xs sm:text-sm disabled:opacity-50"
               >
                 [JOIN CHAT]
@@ -461,6 +724,9 @@ export default function TerminalPage() {
                     {chats.length === 0 ? (
                       <div className="col-span-12 text-center py-4 text-green-600 text-xs sm:text-sm">
                         <p>No chat rooms found. Create or join one to get started.</p>
+                        {connectionStatus === "disconnected" && (
+                          <p className="text-red-400 mt-2">Connection lost - chats may not be loading</p>
+                        )}
                         <div className="terminal-cursor-block mt-2 mx-auto">█</div>
                       </div>
                     ) : (
@@ -497,6 +763,9 @@ export default function TerminalPage() {
               <p>{">"} All messages are encrypted end-to-end</p>
               <p>{">"} Share TERMNL.APP with friends to join the network</p>
               <p>{">"} Real-time messaging with secure functions enabled</p>
+              {connectionStatus !== "connected" && (
+                <p className="text-yellow-400 mt-2">{">"} Connection issues detected - some features may be limited</p>
+              )}
             </div>
           </div>
         </div>

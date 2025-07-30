@@ -54,6 +54,7 @@ export default function ChatPage() {
   const supabase = createClient()
   const [connectionStatus, setConnectionStatus] = useState<"connected" | "connecting" | "disconnected">("connected")
   const [retryAttempts, setRetryAttempts] = useState(0)
+  const [retryingConnection, setRetryingConnection] = useState(false)
 
   const loadChat = async (userId: string, chatId: string, retryCount = 0) => {
     try {
@@ -80,7 +81,10 @@ export default function ChatPage() {
           }
         }
 
-        setError(`Failed to load chat: ${functionError.message}`)
+        // Only set error if we've exhausted retries
+        if (retryCount >= 3) {
+          setError(`Failed to load chat: ${functionError.message}`)
+        }
         return
       }
 
@@ -98,7 +102,9 @@ export default function ChatPage() {
             .single()
 
           if (directError || !directChatData) {
-            setError("Chat not found or you don't have access to it")
+            if (retryCount >= 2) {
+              setError("Chat not found or you don't have access to it")
+            }
             return
           }
 
@@ -112,17 +118,23 @@ export default function ChatPage() {
             .single()
 
           if (!isOwner && !participantData) {
-            setError("You don't have permission to access this chat")
+            if (retryCount >= 2) {
+              setError("You don't have permission to access this chat")
+            }
             return
           }
 
           console.log("Chat loaded via direct query:", directChatData.name)
           setChat(directChatData)
           setIsOwner(isOwner)
+          // Clear any previous errors on success
+          setError("")
           return
         } catch (directErr) {
           console.error("Direct query also failed:", directErr)
-          setError("Chat not found or you don't have access to it")
+          if (retryCount >= 2) {
+            setError("Chat not found or you don't have access to it")
+          }
           return
         }
       }
@@ -139,6 +151,8 @@ export default function ChatPage() {
         updated_at: chatData.updated_at,
       })
       setIsOwner(chatData.is_owner)
+      // Clear any previous errors on success
+      setError("")
     } catch (err) {
       console.error("Failed to load chat:", err)
 
@@ -153,7 +167,10 @@ export default function ChatPage() {
         }
       }
 
-      setError(`Failed to load chat: ${err instanceof Error ? err.message : "Unknown error"}`)
+      // Only set error if we've exhausted retries
+      if (retryCount >= 2) {
+        setError(`Failed to load chat: ${err instanceof Error ? err.message : "Unknown error"}`)
+      }
     }
   }
 
@@ -198,9 +215,9 @@ export default function ChatPage() {
         const { data, error } = await supabase
           .from("messages")
           .select(`
-          *,
-          profiles (username)
-        `)
+        *,
+        profiles (username)
+      `)
           .eq("chat_id", chatId)
           .order("created_at", { ascending: true })
 
@@ -269,11 +286,14 @@ export default function ChatPage() {
         })
 
         setUser(session.user)
+        setRetryingConnection(true)
         await loadChat(session.user.id, params.id as string)
+        setRetryingConnection(false)
         setLoading(false)
       } catch (err) {
         console.error("Chat initialization error:", err)
         setError("Failed to initialize chat. Please check your connection.")
+        setRetryingConnection(false)
         setLoading(false)
       }
     }
@@ -494,14 +514,37 @@ export default function ChatPage() {
   const copyInviteUrl = async () => {
     if (chat?.invite_code) {
       try {
-        const inviteUrl = `${getInviteBaseUrl()}/join/${chat?.invite_code}`
-        await navigator.clipboard.writeText(inviteUrl)
+        const inviteUrl = `${getInviteBaseUrl()}/join/${chat.invite_code}`
+
+        // Try multiple methods to copy to clipboard
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(inviteUrl)
+        } else {
+          // Fallback for older browsers or non-HTTPS
+          const textArea = document.createElement("textarea")
+          textArea.value = inviteUrl
+          textArea.style.position = "fixed"
+          textArea.style.left = "-999999px"
+          textArea.style.top = "-999999px"
+          document.body.appendChild(textArea)
+          textArea.focus()
+          textArea.select()
+          document.execCommand("copy")
+          textArea.remove()
+        }
+
         setCopySuccess(true)
-        setTimeout(() => setCopySuccess(false), 2000)
+        setTimeout(() => setCopySuccess(false), 3000)
         console.log("Copied invite URL:", inviteUrl)
+
+        // Also log the invite code for debugging
+        console.log("Invite code:", chat.invite_code)
       } catch (err) {
         console.error("Failed to copy invite URL:", err)
-        setError("Failed to copy invite URL")
+
+        // Show the URL in an alert as fallback
+        const inviteUrl = `${getInviteBaseUrl()}/join/${chat.invite_code}`
+        alert(`Copy this invite URL:\n\n${inviteUrl}`)
       }
     }
   }
@@ -526,7 +569,10 @@ export default function ChatPage() {
     return (
       <div className="min-h-screen bg-black text-green-400 font-mono flex items-center justify-center">
         <div className="text-center">
-          <p>{">"} LOADING CHAT...</p>
+          <p>
+            {">"} {retryingConnection ? "CONNECTING TO CHAT..." : "LOADING CHAT..."}
+          </p>
+          {retryingConnection && <p className="text-xs text-green-600 mt-2">{">"} This may take a moment...</p>}
           <div className="terminal-cursor-block mt-2">█</div>
         </div>
       </div>
