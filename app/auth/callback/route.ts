@@ -8,9 +8,13 @@ export async function GET(request: NextRequest) {
   const error = requestUrl.searchParams.get("error")
   const errorDescription = requestUrl.searchParams.get("error_description")
   const errorCode = requestUrl.searchParams.get("error_code")
+  const token = requestUrl.searchParams.get("token")
+  const type = requestUrl.searchParams.get("type")
 
   console.log("Auth callback received:", {
     code: code ? "present" : "missing",
+    token: token ? "present" : "missing",
+    type,
     error,
     errorDescription,
     errorCode,
@@ -20,7 +24,6 @@ export async function GET(request: NextRequest) {
   if (error) {
     console.error("Auth callback error:", { error, errorDescription, errorCode })
 
-    // Handle various error cases
     const redirectUrl = new URL("/", requestUrl.origin)
 
     if (error === "access_denied") {
@@ -39,14 +42,14 @@ export async function GET(request: NextRequest) {
       redirectUrl.searchParams.set("message", "An error occurred during verification. Please try again.")
     }
 
-    console.log("Redirecting to:", redirectUrl.toString())
     return NextResponse.redirect(redirectUrl)
   }
 
-  if (code) {
-    const cookieStore = cookies()
-    const supabase = createRouteHandlerClient({ cookies: () => cookieStore })
+  const cookieStore = cookies()
+  const supabase = createRouteHandlerClient({ cookies: () => cookieStore })
 
+  // Handle both code-based and token-based verification
+  if (code) {
     try {
       console.log("Attempting to exchange code for session...")
 
@@ -85,19 +88,12 @@ export async function GET(request: NextRequest) {
         data?.user?.app_metadata?.email_verified === true
 
       if (isEmailVerified) {
-        // Successful verification - redirect to terminal
         console.log("Email verified successfully, redirecting to terminal")
         const redirectUrl = new URL("/terminal", requestUrl.origin)
         redirectUrl.searchParams.set("verified", "true")
         return NextResponse.redirect(redirectUrl)
       } else {
-        // User exists but email not confirmed
-        console.log("User exists but email not confirmed", {
-          email_confirmed_at: data?.user?.email_confirmed_at,
-          confirmed_at: data?.user?.confirmed_at,
-          user_metadata: data?.user?.user_metadata,
-          app_metadata: data?.user?.app_metadata,
-        })
+        console.log("User exists but email not confirmed")
         const redirectUrl = new URL("/", requestUrl.origin)
         redirectUrl.searchParams.set("error", "email_not_verified")
         redirectUrl.searchParams.set("message", "Email verification is still pending. Please check your email again.")
@@ -110,12 +106,46 @@ export async function GET(request: NextRequest) {
       redirectUrl.searchParams.set("message", "An unexpected error occurred during verification.")
       return NextResponse.redirect(redirectUrl)
     }
+  } else if (token && type === "signup") {
+    // Handle legacy token-based verification
+    try {
+      console.log("Attempting token-based verification...")
+
+      const { data, error } = await supabase.auth.verifyOtp({
+        token_hash: token,
+        type: "signup",
+      })
+
+      if (error) {
+        console.error("Token verification error:", error)
+        const redirectUrl = new URL("/", requestUrl.origin)
+        redirectUrl.searchParams.set("error", "verification_invalid")
+        redirectUrl.searchParams.set(
+          "message",
+          "Email verification link is invalid or expired. Please request a new one.",
+        )
+        return NextResponse.redirect(redirectUrl)
+      }
+
+      if (data.user) {
+        console.log("Token verification successful, redirecting to terminal")
+        const redirectUrl = new URL("/terminal", requestUrl.origin)
+        redirectUrl.searchParams.set("verified", "true")
+        return NextResponse.redirect(redirectUrl)
+      }
+    } catch (err) {
+      console.error("Token verification exception:", err)
+      const redirectUrl = new URL("/", requestUrl.origin)
+      redirectUrl.searchParams.set("error", "verification_error")
+      redirectUrl.searchParams.set("message", "An unexpected error occurred during verification.")
+      return NextResponse.redirect(redirectUrl)
+    }
   }
 
-  // No code parameter - redirect to home
-  console.log("No code parameter, redirecting to home")
+  // No valid verification parameters
+  console.log("No valid verification parameters, redirecting to home")
   const redirectUrl = new URL("/", requestUrl.origin)
   redirectUrl.searchParams.set("error", "verification_error")
-  redirectUrl.searchParams.set("message", "Invalid verification link.")
+  redirectUrl.searchParams.set("message", "Invalid verification link. Please request a new one.")
   return NextResponse.redirect(redirectUrl)
 }
