@@ -134,17 +134,45 @@ export default function TerminalPage() {
         }
       }
 
-      // Combine and format chats
-      const allChats = [
-        ...(ownedChats || []).map((chat: any) => ({ ...chat, participants_count: 1 })),
-        ...participatedChats.map((chat: any) => ({ ...chat, participants_count: 1 })),
-      ]
+      // Combine all chats
+      const allChats = [...(ownedChats || []), ...participatedChats]
 
       // Remove duplicates
       const uniqueChats = allChats.filter((chat, index, self) => index === self.findIndex((c) => c.id === chat.id))
 
-      console.log("Chats loaded successfully:", uniqueChats.length)
-      setChats(uniqueChats)
+      // Get last message for each chat
+      const chatsWithLastMessage = await Promise.all(
+        uniqueChats.map(async (chat) => {
+          try {
+            const { data: lastMessage, error: messageError } = await supabase
+              .from("messages")
+              .select("created_at")
+              .eq("chat_id", chat.id)
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .single()
+
+            return {
+              ...chat,
+              participants_count: 1,
+              last_message_at: lastMessage?.created_at || chat.created_at,
+            }
+          } catch (err) {
+            // If no messages, use chat creation date
+            return {
+              ...chat,
+              participants_count: 1,
+              last_message_at: chat.created_at,
+            }
+          }
+        }),
+      )
+
+      // Sort by last message time (most recent first)
+      chatsWithLastMessage.sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime())
+
+      console.log("Chats loaded successfully:", chatsWithLastMessage.length)
+      setChats(chatsWithLastMessage)
       setError("")
     } catch (err) {
       console.error("Failed to load chats:", err)
@@ -242,6 +270,29 @@ export default function TerminalPage() {
   const logout = async () => {
     await supabase.auth.signOut()
     router.push("/")
+  }
+
+  const formatLastMessageTime = (dateString: string) => {
+    const messageDate = new Date(dateString)
+    const today = new Date()
+
+    // Check if it's today
+    const isToday = messageDate.toDateString() === today.toDateString()
+
+    if (isToday) {
+      // Show just the time for today's messages
+      return messageDate.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      })
+    } else {
+      // Show date for older messages
+      return messageDate.toLocaleDateString([], {
+        month: "short",
+        day: "numeric",
+      })
+    }
   }
 
   if (loading) {
@@ -427,7 +478,7 @@ export default function TerminalPage() {
                       <div className="col-span-4">FILENAME</div>
                       <div className="col-span-3">CODE</div>
                       <div className="col-span-2">USERS</div>
-                      <div className="col-span-2">CREATED</div>
+                      <div className="col-span-2">LAST MSG</div>
                       <div className="col-span-1">ACTION</div>
                     </div>
 
@@ -448,7 +499,7 @@ export default function TerminalPage() {
                           <div className="col-span-3 text-[10px] sm:text-xs">{chat.invite_code}</div>
                           <div className="col-span-2">{chat.participants_count || 1}</div>
                           <div className="col-span-2 text-[10px] sm:text-xs">
-                            {new Date(chat.created_at).toLocaleDateString()}
+                            {formatLastMessageTime(chat.last_message_at)}
                           </div>
                           <div className="col-span-1">
                             <span className="text-[10px] sm:text-xs bg-green-600 text-black px-1 py-0.5 rounded">
