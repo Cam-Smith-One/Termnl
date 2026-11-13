@@ -9,7 +9,9 @@ await Promise.all(['termnl', 'mcp'].map(name => chmod(`dist-cli/${name}.mjs`, 0o
 const root = JSON.parse(await readFile('package.json', 'utf8'))
 const used = new Set(Object.values(metafile.outputs).flatMap(output => output.imports).filter(item => item.external && !item.path.startsWith('node:'))
   .map(item => item.path.split('/').slice(0, item.path.startsWith('@') ? 2 : 1).join('/')))
-const dependencies = Object.fromEntries(Object.entries(root.dependencies).filter(([name]) => used.has(name)))
+// Exact installed versions, not ranges: the published plugin runs the crypto libraries it was tested with.
+const installed = async name => JSON.parse(await readFile(`node_modules/${name}/package.json`, 'utf8')).version
+const dependencies = Object.fromEntries(await Promise.all(Object.keys(root.dependencies).filter(name => used.has(name)).map(async name => [name, await installed(name)])))
 const missing = [...used].filter(name => !dependencies[name] && !/^(fs|os|path|util|crypto)$/.test(name))
 if (missing.length) throw new Error(`CLI imports packages missing from dependencies: ${missing.join(', ')}`)
 await writeFile('dist-cli/package.json', JSON.stringify({ name: root.name, version: root.version, description: root.description, license: root.license,

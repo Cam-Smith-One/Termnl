@@ -264,9 +264,9 @@ export class Termnl {
   /** Find a contact by self-declared name, npub or hex identity. Ambiguous names are refused. */
   resolveContact(ref: string): Contact {
     const all = this.contacts();
-    const matches = all.filter(
-      (c) => c.identity === ref || npubEncode(c.identity) === ref || (c.name && c.name.toLowerCase() === ref.toLowerCase()),
-    );
+    const exact = all.find((c) => c.identity === ref || npubEncode(c.identity) === ref);
+    if (exact) return exact; // a contact cannot shadow another by naming itself after that contact's ID
+    const matches = all.filter((c) => c.name && c.name.toLowerCase() === ref.toLowerCase());
     if (matches.length === 1) return matches[0];
     if (matches.length > 1) throw new Error(`"${ref}" matches several contacts; use the npub`);
     throw new Error(`No paired contact "${ref}"`);
@@ -370,6 +370,7 @@ export class Termnl {
     opened.sort((a, b) => a.env.sent_at - b.env.sent_at);
 
     let processed = 0;
+    const isContact = (agent: string) => this.contacts().some((c) => c.agent === agent);
     for (const { sender, env } of opened) {
       if (seen.envelopes.includes(env.id) || (env.expires_at && env.expires_at < now())) {
         dropped++;
@@ -379,10 +380,11 @@ export class Termnl {
       try {
         const ok = await this.handle(sender, env);
         ok ? processed++ : dropped++;
-        this.log("in", sender, ok ? env.type : `dropped:${env.type}`, env.id);
+        // Only paired contacts reach the log, so a stranger cannot flood it or push out real history.
+        if (ok || isContact(sender)) this.log("in", sender, ok ? env.type : `dropped:${env.type}`, env.id);
       } catch (e) {
         dropped++;
-        this.log("in", sender, `rejected:${env.type}`, env.id, String((e as Error).message));
+        if (isContact(sender)) this.log("in", sender, `rejected:${env.type}`, env.id, String((e as Error).message));
       }
     }
     seen.wraps = seen.wraps.slice(-5000);
@@ -409,7 +411,17 @@ export class Termnl {
   }
 
   private saveContact(c: Contact): Contact {
-    const all = this.contacts().filter((x) => x.identity !== c.identity);
+    const known = this.contacts();
+    // Pairing must never undo a rotation: an older certificate may belong to a retired, stolen key.
+    const existing = known.find((x) => x.identity === c.identity);
+    if (existing && c.cert.created_at < existing.cert.created_at) {
+      throw new Error("That pairing uses an older key than the one on record for this contact");
+    }
+    // One agent key, one contact: otherwise messages from its real owner are attributed to someone else.
+    if (known.some((x) => x.agent === c.agent && x.identity !== c.identity)) {
+      throw new Error("That agent key already belongs to another contact");
+    }
+    const all = known.filter((x) => x.identity !== c.identity);
     all.push(c);
     this.store.write("contacts.json", all);
     return c;
@@ -433,7 +445,7 @@ export class Termnl {
       onauth: async (event) => finalizeEvent(event, this.sk), maxWait: 10000,
     }));
     const ok = results.filter((r) => r.status === "fulfilled").length;
-    if (ok === 0) throw new Error(`No relay accepted the message (${to.relays.join(", ")})`);
+    if (ok === 0) throw new Error(`None of the contact's ${to.relays.length} relay(s) accepted the message`);
     this.log("out", to.agent, env.type, env.id, `${ok}/${to.relays.length} relays`);
   }
 
@@ -476,8 +488,6 @@ export class Termnl {
     const inv = invites.find((i) => i.code === body.code);
     if (!inv || inv.used || inv.expires < now()) return false;
     if (!certValid(body.cert, body.identity, sender)) return false;
-    inv.used = true;
-    this.store.write("invites.json", invites);
     const contact = this.saveContact({
       identity: body.identity,
       agent: sender,
@@ -486,6 +496,8 @@ export class Termnl {
       name: body.name,
       paired_at: now(),
     });
+    inv.used = true;
+    this.store.write("invites.json", invites);
     await this.send(contact, { type: "knock_accept", body: this.pairingBody() });
     return true;
   }

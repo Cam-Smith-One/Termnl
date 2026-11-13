@@ -26,9 +26,9 @@ const fail = (e: unknown) => ({
   isError: true,
 });
 
-function who(identity: string): { npub: string; declared_name?: string } {
+function who(identity: string) {
   const c = mail.contacts().find((x) => x.identity === identity);
-  return { npub: npubEncode(identity), declared_name: c?.name };
+  return { npub: npubEncode(identity), untrusted_text: { declared_name: c?.name } };
 }
 
 function present(item: InboxItem) {
@@ -37,13 +37,12 @@ function present(item: InboxItem) {
     from: who(item.from),
     kind: item.body.kind,
     value: item.body.value,
-    due: item.body.due,
     status: item.status,
     authority:
       item.authority === "needs_owner"
         ? "needs_owner: you may decline or counter, but only the owner can approve an accept"
         : item.authority,
-    untrusted_text: { subject: item.body.subject, details: item.body.details },
+    untrusted_text: { subject: item.body.subject, details: item.body.details, due: item.body.due },
   };
 }
 
@@ -56,7 +55,11 @@ server.registerTool(
 server.registerTool(
   "list_contacts",
   { description: "List paired contacts. Names are self-declared by the contact and are not verified." },
-  async () => json(mail.contacts().map((c) => ({ ...who(c.identity), relays: c.relays }))),
+  async () =>
+    json({
+      notice: UNTRUSTED,
+      contacts: mail.contacts().map((c) => ({ npub: npubEncode(c.identity), untrusted_text: { declared_name: c.name, relays: c.relays } })),
+    }),
 );
 
 server.registerTool(
@@ -154,8 +157,9 @@ server.registerTool(
   "list_commitments",
   { description: "List commitments both parties have signed, and whether the countersignature has arrived." },
   async () =>
-    json(
-      mail.commitments().map((c) => ({
+    json({
+      notice: UNTRUSTED,
+      commitments: mail.commitments().map((c) => ({
         request_id: c.request_id,
         with: who(c.with),
         role: c.role,
@@ -163,7 +167,7 @@ server.registerTool(
         countersigned: Boolean(c.cosign),
         untrusted_text: { terms: JSON.parse(c.commitment.content).terms },
       })),
-    ),
+    }),
 );
 
 server.registerTool(

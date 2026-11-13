@@ -194,3 +194,50 @@ test("request records stay idempotent after the bounded replay cache expires", a
   assert.equal(alex.inbox().length, count);
   assert.equal(alex.inbox()[0].body.subject, existing.body.subject);
 });
+
+// ---- security review regressions ----
+import { hexToBytes } from "nostr-tools/utils";
+import { encodeInvite } from "../lib/termnl/protocol";
+
+test("re-pairing with a pre-rotation invite cannot bring back a retired key", async () => {
+  const p = profile("p1"), q = profile("q1");
+  try {
+    const oldInvite = q.createInvite(); // carries q's current certificate
+    await p.acceptInvite(q.createInvite()); await q.sync(); await p.sync();
+    await q.rotateAgentKey(); await p.sync();
+    const rotated = contactOf(p, q).agent;
+    await assert.rejects(p.acceptInvite(oldInvite), /older key/);
+    assert.equal(contactOf(p, q).agent, rotated);
+  } finally { p.close(); q.close(); }
+});
+
+test("an invite cannot claim an agent key that already belongs to another contact", async () => {
+  const p = profile("p2"), real = profile("real2"), liar = profile("liar2");
+  try {
+    await p.acceptInvite(real.createInvite());
+    const liarIdentity = liar.store.read<{ identity: string }>("config.json", null as never).identity;
+    const cert = finalizeEvent({
+      kind: KIND.AGENT_CERT, created_at: Math.floor(Date.now() / 1000), content: "",
+      tags: [["p", real.agentPub], ["expiration", String(Math.floor(Date.now() / 1000) + 86400)]],
+    }, hexToBytes(liar.store.read<{ sk: string }>("identity.key", null as never).sk));
+    const forged = encodeInvite({ identity: liarIdentity, cert, relays: [relay.url], name: "liar", agent: real.agentPub, code: "0".repeat(32) });
+    await assert.rejects(p.acceptInvite(forged), /already belongs to another contact/);
+    assert.equal(p.contacts().length, 1);
+  } finally { p.close(); real.close(); liar.close(); }
+});
+
+test("a contact named after another contact's ID cannot shadow it, and strangers cannot write to the log", async () => {
+  const p = profile("p3"), q = profile("q3");
+  await p.acceptInvite(q.createInvite());
+  const qIdentity = contactOf(p, q).identity;
+  const shadow = profile(qIdentity);
+  try {
+    await p.acceptInvite(shadow.createInvite());
+    assert.equal(p.resolveContact(qIdentity).agent, q.agentPub);
+
+    const before = p.recentLog(1000).length;
+    await raw(mallory).send({ agent: p.agentPub, relays: [relay.url] }, { type: "request", body: { kind: "inform", subject: "log spam" } });
+    assert.equal((await p.sync()).dropped, 1);
+    assert.equal(p.recentLog(1000).length, before);
+  } finally { p.close(); q.close(); shadow.close(); }
+});

@@ -106,7 +106,8 @@ export default function ConsolePage() {
     try { const names = BrowserStore.names(); setProfiles(names); setLockedName(names[0] || ""); setReady(true) }
     catch { write("Browser storage is unavailable. Allow local storage to use this console.", "error") }
     if (window.location.hash) {
-      const fragment = decodeURIComponent(window.location.hash.slice(1))
+      let fragment = ""
+      try { fragment = decodeURIComponent(window.location.hash.slice(1)) } catch { /* malformed link: ignore it, still clear the address bar */ }
       if (fragment.startsWith("termnl1:")) { pendingInvite.current = fragment; setHasInvite(true) }
       window.history.replaceState(null, "", "/console")
     }

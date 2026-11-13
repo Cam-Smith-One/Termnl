@@ -55,7 +55,7 @@ const pairingBody = z.object({
   identity: hex64,
   cert: nostrEvent,
   relays: relayList,
-  name: z.string().max(80).optional(),
+  name: z.string().max(80).regex(/^[^\p{Cc}]*$/u, "no control characters").optional(),
 });
 
 export const envelope = z.discriminatedUnion("type", [

@@ -1,7 +1,7 @@
 {
   "name": "termnl",
-  "version": "0.2.0",
-  "private": false,
+  "version": "0.2.1",
+  "private": true,
   "scripts": {
     "build": "pnpm build:cli && next build",
     "dev": "next dev",

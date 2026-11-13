@@ -3,13 +3,14 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameS
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-/** Small JSON-file store. One directory per profile; secrets are written 0600. */
+/** Small JSON-file store. One directory per profile, readable only by its owner. */
 export class FileStore implements Store {
   readonly dir: string;
 
   constructor(dir?: string) {
     this.dir = dir ?? process.env.TERMNL_HOME ?? join(homedir(), ".termnl");
     mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+    chmodSync(this.dir, 0o700); // mkdir leaves an existing directory's mode alone
   }
 
   path(name: string): string {
@@ -27,13 +28,16 @@ export class FileStore implements Store {
 
   write(name: string, value: unknown, secret = false): void {
     const tmp = this.path(`${name}.tmp`);
-    writeFileSync(tmp, JSON.stringify(value, null, 2), { mode: secret ? 0o600 : 0o644 });
+    // Everything is owner-only: invites, contacts and history are sensitive too, not just keys.
+    void secret;
+    writeFileSync(tmp, JSON.stringify(value, null, 2), { mode: 0o600 });
     renameSync(tmp, this.path(name));
-    if (secret) chmodSync(this.path(name), 0o600);
+    chmodSync(this.path(name), 0o600);
   }
 
   append(name: string, value: unknown): void {
-    appendFileSync(this.path(name), JSON.stringify(value) + "\n");
+    appendFileSync(this.path(name), JSON.stringify(value) + "\n", { mode: 0o600 });
+    chmodSync(this.path(name), 0o600);
   }
 
   lines<T>(name: string, last = 50): T[] {
