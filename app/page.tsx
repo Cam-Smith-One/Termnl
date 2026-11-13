@@ -1,5 +1,5 @@
 import Link from "next/link"
-import { FileSignature, KeyRound, Lock, ShieldCheck } from "lucide-react"
+import { ArrowRight, Bot, FileSignature, KeyRound, Lock, Radio, ShieldCheck } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
 
 const logo = `████████╗███████╗██████╗ ███╗   ███╗███╗   ██╗██╗
@@ -18,8 +18,21 @@ const trust = [
 const steps = [
   ["1", "Create your profile", "Pick a name and a passphrase. No email, no account."],
   ["2", "Pair with someone", "Send them a one-time link. When they open it, your agents can reach each other."],
-  ["3", "Send a request", "Ask, offer or inform, from the console or through your own AI agent."],
+  ["3", "Send a request", "Fill in a short form in the console, or let your own AI agent do it."],
 ]
+const journey = [
+  [Bot, "Your agent", "Writes the request, signs it and locks it on your device."],
+  [Radio, "Relay", "Passes on a sealed envelope. It cannot open it or change it."],
+  [Bot, "Their agent", "Unlocks it on their device and checks it really came from you."],
+] as const
+const agentSteps = [
+  ["Get the plugin", "Repository access is required during private testing. Needs Node 22.18+ and pnpm.", "git clone https://github.com/Cam-Smith-One/v0-termnl-chat-app.git termnl\ncd termnl && pnpm install && pnpm build:cli"],
+  ["Create your agent's profile", "This makes the agent its own keys on your machine. It is separate from your browser profile.", "node dist-cli/termnl.mjs init --name my-agent"],
+  ["Add it to your agent", "Claude Code is shown. For Codex, use codex mcp add termnl with the same node command. Any other MCP client works the same way.", "claude mcp add --scope user termnl -- node /absolute/path/to/termnl/dist-cli/mcp.mjs"],
+  ["Pair it with someone", "This prints a one-time link. Send it to them, or open it yourself in the console to pair your agent with your browser profile.", "node dist-cli/termnl.mjs invite"],
+  ["Just ask", "Restart your agent, then talk to it normally.", "\"Check my Termnl inbox.\"\n\"Send Alex a request to review the draft by Friday.\""],
+]
+const code = "overflow-x-auto rounded-md bg-gray-950 p-4 font-mono text-xs leading-relaxed text-green-400"
 const label = "text-xs font-medium uppercase tracking-widest text-t-muted"
 
 export default function Home() {
@@ -37,6 +50,23 @@ export default function Home() {
           <div className="flex flex-wrap items-center gap-4">
             <Link href="/console" className="btn">Get started</Link>
             <span className="text-sm text-t-muted">No sign-up. No email. Nothing to install.</span>
+          </div>
+        </section>
+
+        <section aria-label="What happens to a request" className="space-y-5">
+          <h2 className={label}>What happens to a request</h2>
+          <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
+            {journey.map(([Icon, title, text], index) => <div key={title} className="contents">
+              {index > 0 && <div className="flex shrink-0 items-center justify-center gap-1 text-t-accent"><Lock aria-hidden className="h-4 w-4" /><ArrowRight aria-hidden className="h-5 w-5 rotate-90 sm:rotate-0" /></div>}
+              <div className={`flex-1 space-y-2 rounded-lg border p-5 text-center ${index === 1 ? "border-dashed border-t-line-strong" : "border-t-accent"}`}>
+                <Icon aria-hidden className="mx-auto h-7 w-7 text-t-accent" />
+                <h3 className="font-semibold text-t-ink">{title}</h3><p className="text-sm leading-relaxed text-t-body">{text}</p>
+              </div>
+            </div>)}
+          </div>
+          <div className="grid gap-4 text-sm leading-relaxed sm:grid-cols-2">
+            <p className="rounded-lg border border-t-line p-4 text-t-body"><strong className="text-t-ink">The relay cannot see</strong> what the request says or who sent it.</p>
+            <p className="rounded-lg border border-t-line p-4 text-t-body"><strong className="text-t-ink">The relay can see</strong> which agent key a sealed envelope is for, and your IP address.</p>
           </div>
         </section>
 
@@ -61,15 +91,22 @@ export default function Home() {
           <Link href="/console" className="btn">Create your profile</Link>
         </section>
 
-        <details id="plugin" className="rounded-lg border border-t-line p-5">
-          <summary className="cursor-pointer font-semibold text-t-ink">Connect your own AI agent (for developers)</summary>
-          <div className="mt-4 space-y-3">
-            <p className="text-sm leading-relaxed text-t-body">Run the local plugin with Claude Code, Codex or any other MCP client. Your agent can read, send and reply within your limits. Only you can pair, approve and change keys.</p>
-            <p className="text-sm leading-relaxed text-t-body">Repository access is required during private testing. The plugin keeps its own profile, separate from your browser profile.</p>
-            <pre className="overflow-x-auto rounded-md bg-gray-950 p-4 font-mono text-xs leading-relaxed text-green-400">{`git clone https://github.com/Cam-Smith-One/v0-termnl-chat-app.git termnl\ncd termnl && pnpm install && pnpm build:cli\nnode dist-cli/termnl.mjs init --name my-agent\nnode dist-cli/termnl.mjs invite\n\n# MCP client: command = node\n# args = ["/absolute/path/to/termnl/dist-cli/mcp.mjs"]`}</pre>
-            <a className="text-sm text-t-accent underline" href="https://github.com/Cam-Smith-One/v0-termnl-chat-app">Repository (access required)</a>
+        <section id="plugin" aria-label="Connect your AI agent" className="space-y-5">
+          <h2 className={label}>Connect your AI agent</h2>
+          <p className="max-w-2xl leading-relaxed text-t-body">Your agent uses a small plugin that runs on your own computer, alongside Claude Code, Codex or any other MCP client. This part needs a terminal.</p>
+          <ol className="space-y-4">
+            {agentSteps.map(([title, text, command], index) => <li key={title} className="space-y-3 rounded-lg border border-t-line p-5">
+              <h3 className="flex items-center gap-3 font-semibold text-t-ink"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-t-accent font-mono text-xs text-t-accent">{index + 1}</span>{title}</h3>
+              <p className="text-sm leading-relaxed text-t-body">{text}</p>
+              <pre className={code}>{command}</pre>
+            </li>)}
+          </ol>
+          <div className="grid gap-4 text-sm leading-relaxed sm:grid-cols-2">
+            <p className="rounded-lg border border-t-line p-4 text-t-body"><strong className="text-t-ink">Your agent can</strong> read your inbox, send requests and reply, all inside the limits you set.</p>
+            <p className="rounded-lg border border-t-line p-4 text-t-body"><strong className="text-t-ink">Only you can</strong> pair with someone, approve anything over the limits, change the limits and replace keys.</p>
           </div>
-        </details>
+          <a className="text-sm text-t-accent underline" href="https://github.com/Cam-Smith-One/v0-termnl-chat-app">Repository (access required)</a>
+        </section>
 
         <aside className="space-y-2 rounded-lg border border-t-warn-line bg-t-warn-bg p-5 text-sm leading-relaxed text-t-warn">
           <h2 className="font-semibold">This is a prototype</h2>
