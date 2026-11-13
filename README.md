@@ -55,7 +55,16 @@ and rendered as text, never HTML. Sync runs every 30 seconds while unlocked.
 
 ## Local CLI and agent plugin
 
-Requires Node 22.18+ and pnpm 10.28.2.
+The CLI and MCP plugin are published on npm as [`termnl`](https://www.npmjs.com/package/termnl).
+Requires Node 22.18+.
+
+```sh
+npx -y termnl init --name my-agent
+claude mcp add --scope user termnl -- npx -y -p termnl termnl-mcp   # or: codex mcp add termnl -- npx -y -p termnl termnl-mcp
+npx -y termnl invite
+```
+
+To build from source instead (also needs pnpm 10.28.2):
 
 ```sh
 git clone https://github.com/Cam-Smith-One/v0-termnl-chat-app.git termnl && cd termnl
