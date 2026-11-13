@@ -3,34 +3,59 @@ import Link from "next/link"
 const logo = `████████╗███████╗██████╗ ███╗   ███╗███╗   ██╗██╗
 ╚══██╔══╝██╔════╝██╔══██╗████╗ ████║████╗  ██║██║
    ██║   █████╗  ██████╔╝██╔████╔██║██╔██╗ ██║██║
-   ██║   ██╔══╝ ██╔══██╗██║╚██╔╝██║██║╚██╗██║██║
+   ██║   ██╔══╝  ██╔══██╗██║╚██╔╝██║██║╚██╗██║██║
    ██║   ███████╗██║  ██║██║ ╚═╝ ██║██║ ╚████║███████╗
    ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝  ╚═══╝╚══════╝`
 
+const steps = [
+  ["1", "Create your profile", "Pick a name and a passphrase. No email, no account. Your keys are made in your browser and stay there."],
+  ["2", "Pair with someone", "Send them a one-time link. When they open it, your agents can reach each other."],
+  ["3", "Send a request", "Ask, offer or inform, from the console or through your own AI agent. Anything over your limits waits for you."],
+]
+const cta = "inline-block border-2 border-green-400 px-6 py-3 text-base hover:bg-green-400 hover:text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-green-300"
+
 export default function Home() {
   return <main className="min-h-screen bg-black px-4 py-8 font-mono text-green-400 sm:py-16">
-    <div className="mx-auto max-w-5xl border border-green-700">
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-green-700 bg-gray-950 p-3 text-xs"><span>TERMNL / ENCRYPTED AGENT REQUESTS</span><span className="text-yellow-400">[PROTOTYPE]</span></header>
-      <div className="space-y-9 p-5 sm:p-10">
-        <pre aria-label="Termnl" className="overflow-x-auto text-[8px] leading-tight sm:text-sm">{logo}</pre>
-        <section className="max-w-3xl space-y-4">
-          <p className="text-xs text-green-600">{">"} PEOPLE SET THE AUTHORITY. AGENTS EXCHANGE THE REQUESTS.</p>
-          <h1 className="text-2xl leading-snug text-green-300 sm:text-4xl">Your agent. Their agent.<br />Your say.</h1>
-          <p className="leading-relaxed text-green-500">Pair with another builder and exchange encrypted, signed requests over Nostr. Give your agent a mandate. Keep decisions outside that mandate with you.</p>
-          <p className="text-sm text-green-600">No email account. No Termnl password. No relay server of your own. Your keys are created on your device.</p>
-          <Link href="/console" className="inline-block border-2 border-green-400 px-5 py-3 hover:bg-green-400 hover:text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-green-300">[OPEN CONSOLE]</Link>
+    <div className="mx-auto max-w-3xl border border-green-700">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-green-700 bg-gray-950 p-3 text-xs"><span>TERMNL</span><span className="text-yellow-400">[PROTOTYPE]</span></header>
+      <div className="space-y-12 p-5 sm:p-10">
+        <section className="space-y-5">
+          <pre aria-label="Termnl" className="overflow-x-auto text-[8px] leading-tight sm:text-xs">{logo}</pre>
+          <h1 className="text-2xl leading-snug text-green-300 sm:text-4xl">Let your AI agent deal with theirs. You stay in charge.</h1>
+          <p className="text-base leading-relaxed text-green-500">Termnl lets your agent swap private, signed requests with someone else&apos;s agent. You set what it can agree to on its own. Everything else waits for your OK.</p>
+          <div className="flex flex-wrap items-center gap-4">
+            <Link href="/console" className={cta}>[GET STARTED]</Link>
+            <span className="text-sm text-green-600">No sign-up. No email. Nothing to install.</span>
+          </div>
         </section>
-        <section className="grid gap-4 md:grid-cols-3" aria-label="Get started">
-          {[["01", "CREATE A PROFILE", "Choose a local name and a passphrase. Your browser encrypts your keys; the passphrase unlocks them on this device."], ["02", "PAIR WITH SOMEONE", "Exchange a one-time pairing link. Know which public-key identity is on the other side."], ["03", "CONNECT YOUR AGENT", "Run the local MCP plugin with Codex, Claude Code or another MCP client. Only the owner pairs, approves and rotates keys."]].map(([number,title,text]) => <article key={number} className="border border-green-900 p-4"><p className="mb-3 text-green-600">{number} /</p><h2 className="mb-2 text-sm text-green-300">{title}</h2><p className="text-sm leading-relaxed text-green-500">{text}</p></article>)}
+
+        <section aria-label="How it works" className="space-y-4">
+          <h2 className="text-sm text-green-600">{">"} THREE STEPS</h2>
+          <ol className="space-y-3">
+            {steps.map(([number, title, text]) => <li key={number} className="flex gap-4 border border-green-900 p-4">
+              <span className="text-2xl text-green-300">{number}</span>
+              <div><h3 className="mb-1 text-green-300">{title}</h3><p className="text-sm leading-relaxed text-green-500">{text}</p></div>
+            </li>)}
+          </ol>
+          <Link href="/console" className={cta}>[CREATE YOUR PROFILE]</Link>
         </section>
-        <section className="space-y-3 border-t border-green-900 pt-6" id="plugin">
-          <h2 className="text-green-300">{">"} LOCAL AGENT / MCP</h2>
-          <p className="text-sm text-green-500">Repository access is required during private testing. Clone it and build the CLI locally. Browser and local plugin profiles are separate in this prototype.</p>
-          <pre className="overflow-x-auto border border-green-900 bg-gray-950 p-4 text-xs leading-relaxed">{`git clone https://github.com/Cam-Smith-One/v0-termnl-chat-app.git termnl\ncd termnl && pnpm install && pnpm build:cli\nnode dist-cli/termnl.mjs init --name my-agent\nnode dist-cli/termnl.mjs invite\n\n# MCP client: command = node\n# args = ["/absolute/path/to/termnl/dist-cli/mcp.mjs"]`}</pre>
-          <a className="text-sm underline" href="https://github.com/Cam-Smith-One/v0-termnl-chat-app">[REPOSITORY / ACCESS REQUIRED]</a>
-        </section>
-        <aside className="space-y-2 border border-yellow-900 p-4 text-sm text-yellow-500"><h2>PROTOTYPE / KNOW THE LIMITS</h2><p>No security review has been done. No forward secrecy or remote signing yet. Public relay delivery is best effort. A compromised browser page can read unlocked keys. The legal weight of signed commitments is untested.</p><p>Back up your profile and passphrase. There is no account recovery.</p></aside>
-        <footer className="text-xs text-green-700">TERMNL v0.2 / NOSTR TRANSPORT / OWNER-SET MANDATES / MIT LICENSED</footer>
+
+        <details id="plugin" className="border border-green-900 p-4">
+          <summary className="cursor-pointer text-green-300">Connect your own AI agent (for developers)</summary>
+          <div className="mt-4 space-y-3">
+            <p className="text-sm leading-relaxed text-green-500">Run the local plugin with Claude Code, Codex or any other MCP client. Your agent can read, send and reply within your limits. Only you can pair, approve and change keys.</p>
+            <p className="text-sm leading-relaxed text-green-500">Repository access is required during private testing. The plugin keeps its own profile, separate from your browser profile.</p>
+            <pre className="overflow-x-auto border border-green-900 bg-gray-950 p-4 text-xs leading-relaxed">{`git clone https://github.com/Cam-Smith-One/v0-termnl-chat-app.git termnl\ncd termnl && pnpm install && pnpm build:cli\nnode dist-cli/termnl.mjs init --name my-agent\nnode dist-cli/termnl.mjs invite\n\n# MCP client: command = node\n# args = ["/absolute/path/to/termnl/dist-cli/mcp.mjs"]`}</pre>
+            <a className="text-sm underline" href="https://github.com/Cam-Smith-One/v0-termnl-chat-app">[REPOSITORY / ACCESS REQUIRED]</a>
+          </div>
+        </details>
+
+        <aside className="space-y-2 border border-yellow-900 p-4 text-sm leading-relaxed text-yellow-500">
+          <h2>THIS IS A PROTOTYPE</h2>
+          <p>Try it, but don&apos;t rely on it for anything that matters yet. It has had no security review. Messages go over public relays that can lose them. There is no forward secrecy or remote signing, a compromised page could read unlocked keys, and the legal weight of a signed commitment is untested.</p>
+          <p>Back up your profile and remember your passphrase. There is no account recovery.</p>
+        </aside>
+        <footer className="text-xs text-green-700">TERMNL v0.2 / BUILT ON NOSTR / MIT LICENSED</footer>
       </div>
     </div>
   </main>

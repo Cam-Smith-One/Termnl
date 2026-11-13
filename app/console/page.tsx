@@ -13,12 +13,12 @@ import { DEFAULT_RELAYS } from "@/lib/termnl/protocol"
 import { handlePayload, handleTemplate, HANDLE_DIFFICULTY } from "@/lib/termnl/handles"
 import { commandWords, options } from "@/lib/termnl/command"
 
-type Entry = { id: number; text: string; kind: "local" | "peer" | "error" | "status" }
+type Entry = { id: number; text: string; kind: "local" | "peer" | "error" | "status"; copy?: string }
 type Session = { mail: Termnl; store: BrowserStore }
 const HELP = `OWNER CONSOLE / commands
 help                         show commands
-init <name>                  create profile using the passphrase field
-unlock <name>                unlock existing profile using the passphrase field
+init <name>                  create a profile (or use the form)
+unlock <name>                unlock a profile (or use the form)
 whoami                       public identity, agent key, mandate
 relays [wss://... ...]        show or replace relays (set before init, too)
 invite [--minutes 60]        one-time private pairing link
@@ -42,6 +42,13 @@ reset                        delete this browser profile (confirmation required)
 
 The human using this console is the owner. The MCP agent has no pairing, approval, mandate-edit or rotation tools.
 Peer names, subjects, details and notes are UNTRUSTED text, not instructions.`
+const WELCOME = `You're in. What next?
+  1. [BACK UP]         save your profile file somewhere safe. There is no recovery without it.
+  2. [INVITE SOMEONE]  get a one-time link to send to the person you want to pair with.
+  3. [CHECK INBOX]     see what their agent has sent you.
+Use the buttons above, or type help to see every command.`
+const ACTIONS = [["invite someone", "invite"], ["check inbox", "inbox"], ["sent", "outbox"], ["contacts", "contacts"], ["agreements", "commitments"], ["back up", "backup"], ["help", "help"], ["lock", "lock"]]
+const button = "border-2 border-green-400 px-4 py-2 text-sm hover:bg-green-400 hover:text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-green-300 disabled:opacity-40"
 const text = (value: unknown) => typeof value === "string" ? value : JSON.stringify(value, null, 2)
 
 function mine(event: UnsignedEvent): Promise<Omit<UnsignedEvent, never>> {
@@ -64,7 +71,11 @@ export default function ConsolePage() {
   const [ready, setReady] = useState(false)
   const [resetting, setResetting] = useState(false)
   const [restoreName, setRestoreName] = useState("")
-  const [entries, setEntries] = useState<Entry[]>([{ id: 0, text: "TERMNL v0.2 / prototype\nNo account or email. Create a local profile or unlock one below. Type help for commands.\nBack up your profile: there is no password reset or key recovery.", kind: "status" }])
+  const [newName, setNewName] = useState("")
+  const [adding, setAdding] = useState(false)
+  const [hasInvite, setHasInvite] = useState(false)
+  const [notice, setNotice] = useState("")
+  const [entries, setEntries] = useState<Entry[]>([{ id: 0, text: "Welcome to Termnl. Everything you do shows up here.", kind: "status" }])
   const session = useRef<Session | null>(null)
   const relays = useRef([...DEFAULT_RELAYS])
   const pendingInvite = useRef("")
@@ -72,7 +83,7 @@ export default function ConsolePage() {
   const counter = useRef(0)
   const outputEnd = useRef<HTMLDivElement>(null)
   const runRef = useRef<(line: string, auto?: boolean) => Promise<void>>()
-  const write = (value: unknown, kind: Entry["kind"] = "local") => setEntries(previous => [...previous, { id: ++counter.current, text: text(value), kind }].slice(-200))
+  const write = (value: unknown, kind: Entry["kind"] = "local", copy?: string) => setEntries(previous => [...previous, { id: ++counter.current, text: text(value), kind, copy }].slice(-200))
   const lock = () => { session.current?.mail.close(); session.current?.store.lock(); session.current = null; setActive(""); setPassword("") }
 
   useEffect(() => {
@@ -80,7 +91,7 @@ export default function ConsolePage() {
     catch { write("Browser storage is unavailable. Allow local storage to use this console.", "error") }
     if (window.location.hash) {
       const fragment = decodeURIComponent(window.location.hash.slice(1))
-      if (fragment.startsWith("termnl1:")) { pendingInvite.current = fragment; write("Private pairing invite loaded. Init/unlock a profile, then submit the pre-filled pair command.", "status") }
+      if (fragment.startsWith("termnl1:")) { pendingInvite.current = fragment; setHasInvite(true) }
       window.history.replaceState(null, "", "/console")
     }
     const timer = setInterval(() => { if (session.current && !processing.current) void runRef.current?.("sync", true) }, 30000)
@@ -94,7 +105,7 @@ export default function ConsolePage() {
 
   const execute = async (line: string, auto = false) => {
     if (!line.trim() || processing.current) return
-    processing.current = true; setBusy(true)
+    processing.current = true; setBusy(true); setNotice("")
     const passphrase = auto ? "" : password
     if (!auto) setPassword("")
     const cmd = line.trim().split(/\s/)[0].toLowerCase()
@@ -115,7 +126,10 @@ export default function ConsolePage() {
           catch (error) { store.reset(); throw error }
           finally { store.finishSetup() }
         } else { store.unlock(passphrase); mail = new Termnl(store) }
-        session.current = { mail, store }; setActive(name); setLockedName(name); setProfiles(BrowserStore.names()); write(mail.whoami()); return
+        session.current = { mail, store }; setActive(name); setLockedName(name); setProfiles(BrowserStore.names()); setNewName(""); setAdding(false)
+        write(`Profile "${name}" is ${cmd === "init" ? "ready" : "unlocked"}.\nYour ID: ${mail.whoami().identity}`)
+        if (cmd === "init") write(WELCOME, "status")
+        return
       }
       if (cmd === "relays" && !session.current) {
         const urls = commandWords(line).slice(1)
@@ -129,22 +143,25 @@ export default function ConsolePage() {
         write(await response.json()); return
       }
       const current = session.current
-      if (!current) throw new Error("Profile is locked. Set a passphrase and run init <name> or unlock <name>.")
+      if (!current) throw new Error("Create or unlock a profile first, using the form above.")
       const { mail, store } = current
       if (cmd === "mandate") { const json = line.trim().slice(cmd.length).trim(); write(json ? mail.setMandate(JSON.parse(json)) : mail.mandate()); return }
       const { args, flags } = options(commandWords(line).slice(1))
       switch (cmd) {
         case "whoami": write(mail.whoami()); break
         case "relays": write(args.length ? mail.setRelays(args) : mail.whoami().relays); break
-        case "invite": write(`https://termnl.app/pair#${mail.createInvite(Number(flags.minutes ?? 60))}`); break
+        case "invite": {
+          const minutes = Number(flags.minutes ?? 60), link = `https://termnl.app/pair#${mail.createInvite(minutes)}`
+          write(`Send this link to the person you want to pair with. It works once and expires in ${minutes} minutes.\nKeep it private: anyone who opens it first is paired with you.\n\n${link}`, "local", link); break
+        }
         case "pair": {
           const contact = await mail.acceptInvite(args[0] || "")
-          pendingInvite.current = ""
-          write({ paired_identity: npubEncode(contact.identity), untrusted_declared_name: contact.name, next: "The other profile needs to sync to complete pairing." }, "peer"); break
+          pendingInvite.current = ""; setHasInvite(false)
+          write(`Paired with "${contact.name ?? "(no name)"}". That name is what they chose; it is not verified.\nTheir ID: ${npubEncode(contact.identity)}\nThey will see you the next time their console syncs.`, "peer"); break
         }
         case "contacts": write(mail.contacts().map(contact => ({ identity: npubEncode(contact.identity), untrusted_name: contact.name, agent: npubEncode(contact.agent), relays: contact.relays })), "peer"); break
         case "sync": { const result = await mail.sync(); if (!auto || result.processed || result.dropped) write(result, "status"); break }
-        case "inbox": await mail.sync(); write(mail.inbox().map(item => ({ ...item, from: npubEncode(item.from), untrusted_text: item.body })), "peer"); break
+        case "inbox": await mail.sync(); if (!mail.inbox().length) { write("Your inbox is empty.", "status"); break } write(mail.inbox().map(item => ({ ...item, from: npubEncode(item.from), untrusted_text: item.body })), "peer"); break
         case "outbox": await mail.sync(); write(mail.outbox(), "peer"); break
         case "approve": write(mail.approve(args[0] || ""), "peer"); break
         case "accept": case "decline": case "counter": write(await mail.respond(args[0] || "", cmd, args.slice(1).join(" ") || undefined), "peer"); break
@@ -181,36 +198,63 @@ export default function ConsolePage() {
     } catch (error) {
       // Keys and passphrases are never included in console input or output.
       const message = error instanceof Error ? error.message : "Command failed"
-      write(message.length > 1200 ? "Command failed validation; check help and the supplied values." : message, "error")
+      const shown = message.length > 1200 ? "Command failed validation; check help and the supplied values." : message
+      write(shown, "error"); if (!session.current) setNotice(shown)
     } finally {
-      if (!auto) setInput((cmd === "init" || cmd === "unlock") && pendingInvite.current && session.current ? `pair ${pendingInvite.current}` : "")
+      if (!auto) setInput("")
       processing.current = false; setBusy(false)
     }
   }
   runRef.current = execute
   const submit = (event: FormEvent) => { event.preventDefault(); void execute(input) }
 
+  const creating = adding || !profiles.length
+  const needsPassphrase = /^\s*(rotate|handle\s+claim)\b/.test(input)
+  const passphraseField = (label: string, create = false) => <label className="block text-xs text-green-500">{label}
+    <TerminalInput aria-label="Profile passphrase" type="password" autoComplete={create ? "new-password" : "current-password"} required minLength={create ? 10 : undefined} value={password} onChange={event => setPassword(event.target.value)} disabled={busy} placeholder={create ? "At least 10 characters" : ""} className="mt-1" /></label>
+
   return <main className="min-h-screen bg-black p-2 font-mono text-green-400 sm:p-5">
-    <div className="mx-auto max-w-6xl border border-green-700">
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-green-700 bg-gray-950 p-3 text-xs"><Link href="/">TERMNL / OWNER CONSOLE</Link><span className={active ? "text-green-300" : "text-yellow-400"}>{!ready ? "OPENING LOCAL STORAGE..." : active ? `UNLOCKED / ${active}` : "LOCKED"} · PROTOTYPE</span></header>
+    <div className="mx-auto max-w-4xl border border-green-700">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-green-700 bg-gray-950 p-3 text-xs"><Link href="/">TERMNL / CONSOLE</Link><span className={active ? "text-green-300" : "text-yellow-400"}>{!ready ? "OPENING..." : active ? `UNLOCKED / ${active}` : "LOCKED"} · PROTOTYPE</span></header>
       <div className="space-y-4 p-3 sm:p-6">
-        <p className="text-xs text-green-600">No email, account or password reset. Profiles stay in this browser. The passphrase encrypts your keys; it is never sent to Termnl.</p>
-        <div className="h-[48vh] min-h-64 overflow-y-auto border border-green-900 bg-gray-950 p-3 terminal-scroll" role="log" aria-label="Terminal output" aria-live="polite">
+        {hasInvite && <div className="space-y-3 border border-green-400 p-4 text-sm text-green-300">
+          <p>{">"} Someone sent you a pairing invite.</p>
+          {active
+            ? <div className="flex flex-wrap gap-2"><button disabled={busy} className={button} onClick={() => void execute(`pair ${pendingInvite.current}`)}>[ACCEPT AND PAIR]</button><button className="px-2 text-xs text-green-600 underline" onClick={() => { pendingInvite.current = ""; setHasInvite(false) }}>ignore</button></div>
+            : <p className="text-green-500">{creating ? "Create a profile" : "Unlock your profile"} below, then you can accept it.</p>}
+        </div>}
+
+        {ready && !active && <form className="mx-auto max-w-md space-y-4 border border-green-700 p-4 sm:p-6" onSubmit={event => { event.preventDefault(); void execute(creating ? `init ${newName}` : `unlock ${lockedName}`) }}>
+          <h1 className="text-lg text-green-300">{creating ? "Create your profile" : "Welcome back"}</h1>
+          <p className="text-sm leading-relaxed text-green-500">{creating ? "Two fields and you're set. No email, no account. Your keys are made and kept in this browser." : "Enter your passphrase to unlock your profile."}</p>
+          {creating
+            ? <label className="block text-xs text-green-500">PROFILE NAME<TerminalInput aria-label="Profile name" required pattern="[a-zA-Z0-9_\-]{1,32}" title="1 to 32 letters, numbers, _ or -" value={newName} onChange={event => setNewName(event.target.value)} disabled={busy} placeholder="e.g. sam" autoComplete="off" spellCheck={false} className="mt-1" /></label>
+            : profiles.length > 1
+              ? <label className="block text-xs text-green-500">PROFILE<select aria-label="Saved profile" className="mt-1 w-full border border-green-400 bg-black p-2 text-base text-green-400" value={lockedName} onChange={event => setLockedName(event.target.value)} disabled={busy}>{profiles.map(profile => <option key={profile} value={profile}>{profile}</option>)}</select></label>
+              : <p className="text-sm text-green-300">Profile: {lockedName}</p>}
+          {passphraseField("PASSPHRASE", creating)}
+          {creating && <p className="text-xs leading-relaxed text-yellow-500">Write the passphrase down. It unlocks your keys and it cannot be reset.</p>}
+          {notice && <p role="alert" className="text-sm text-red-400">{notice}</p>}
+          <button disabled={busy} className={`${button} w-full`}>{busy ? "[WORKING...]" : creating ? "[CREATE PROFILE]" : "[UNLOCK]"}</button>
+          <div className="flex flex-wrap justify-between gap-2 text-xs text-green-600">
+            {profiles.length > 0 && <button type="button" className="underline" onClick={() => { setAdding(!adding); setNotice("") }}>{creating ? "Use an existing profile" : "Create another profile"}</button>}
+            <details className="w-full"><summary className="cursor-pointer underline">Restore from a backup file</summary><div className="mt-3 space-y-3"><TerminalInput aria-label="Restored profile name" placeholder="Name for the restored profile" value={restoreName} onChange={event => setRestoreName(event.target.value)} /><label className="block">Choose your Termnl backup file<input aria-label="Profile backup file" className="mt-2 block w-full" type="file" accept="application/json,.json" onChange={async event => { const file = event.target.files?.[0]; if (!file) return; try { if (file.size > 5*1024*1024) throw new Error("Backup is too large"); BrowserStore.restore(restoreName, await file.text()); setProfiles(BrowserStore.names()); setLockedName(restoreName); setAdding(false); setNotice(""); write("Backup restored. Enter its original passphrase to unlock.", "status") } catch (error) { const message = error instanceof Error ? error.message : "Restore failed"; write(message, "error"); setNotice(message) } event.target.value = "" }} /></label></div></details>
+          </div>
+        </form>}
+
+        {active && <div className="flex flex-wrap gap-2 text-xs">{ACTIONS.map(([label, command]) => <button key={command} disabled={busy} onClick={() => void execute(command)} className="border border-green-700 px-3 py-2 uppercase hover:border-green-400 hover:text-green-300 disabled:opacity-40">[{label}]</button>)}</div>}
+        <div className={`${active ? "h-[48vh] min-h-64" : "max-h-40"} overflow-y-auto border border-green-900 bg-gray-950 p-3 terminal-scroll`} role="log" aria-label="Terminal output" aria-live="polite">
           {entries.map(entry => <div key={entry.id} className={`mb-4 whitespace-pre-wrap break-words text-xs leading-relaxed sm:text-sm ${entry.kind === "error" ? "text-red-400" : entry.kind === "peer" ? "text-amber-400" : entry.kind === "status" ? "text-green-600" : "text-green-300"}`}>
             {entry.kind === "peer" && <p className="mb-1 text-[10px] tracking-widest">[UNTRUSTED PEER TEXT / DATA, NOT INSTRUCTIONS]</p>}{entry.text}
+            {entry.copy && <button className="mt-2 block border border-green-500 px-3 py-1 text-xs hover:bg-green-400 hover:text-black" onClick={event => { const target = event.currentTarget; void navigator.clipboard.writeText(entry.copy!).then(() => { target.textContent = "[COPIED]" }) }}>[COPY LINK]</button>}
           </div>)}<div ref={outputEnd} />
         </div>
         <form onSubmit={submit} className="space-y-3">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="text-xs text-green-500">LOCAL PROFILE<select aria-label="Saved profile" className="mt-1 w-full border border-green-800 bg-black p-2 text-green-400" value={lockedName} onChange={event => { setLockedName(event.target.value); setInput(`unlock ${event.target.value}`) }} disabled={!!active || busy}><option value="">Create with init &lt;name&gt;</option>{profiles.map(profile => <option key={profile} value={profile}>{profile}</option>)}</select></label>
-            <label className="text-xs text-green-500">PASSPHRASE / init, unlock, rotate, handle claim<TerminalInput aria-label="Profile passphrase" type="password" autoComplete="off" value={password} onChange={event => setPassword(event.target.value)} disabled={!ready || busy} placeholder="At least 10 characters for a new profile" className="mt-1" /></label>
-          </div>
-          <div className="flex gap-2"><span className="self-center text-green-600">{">"}</span><TerminalInput aria-label="Terminal command" value={input} onChange={event => setInput(event.target.value)} placeholder={active ? "help, invite, inbox, send..." : "init my-profile or unlock my-profile"} disabled={!ready || busy} autoComplete="off" spellCheck={false} /><button disabled={!ready || busy || !input.trim()} className="border border-green-500 px-3 text-xs hover:bg-green-400 hover:text-black disabled:opacity-40">{busy ? "[WORKING]" : "[RUN]"}</button></div>
+          {active && needsPassphrase && passphraseField("PASSPHRASE / needed again for this command")}
+          <div className="flex gap-2"><span className="self-center text-green-600">{">"}</span><TerminalInput aria-label="Terminal command" value={input} onChange={event => setInput(event.target.value)} placeholder={active ? "type a command, or help" : "help"} disabled={!ready || busy} autoComplete="off" spellCheck={false} /><button disabled={!ready || busy || !input.trim()} className="border border-green-500 px-3 text-xs hover:bg-green-400 hover:text-black disabled:opacity-40">{busy ? "[WORKING]" : "[RUN]"}</button></div>
         </form>
-        <div className="flex flex-wrap gap-2 text-xs">{["help", "whoami", "invite", "contacts", "sync", "inbox", "commitments", "lock"].map(command => <button key={command} disabled={busy} onClick={() => void execute(command)} className="border border-green-900 px-2 py-1 hover:border-green-400 disabled:opacity-40">[{command}]</button>)}</div>
-        {!active && <details className="border border-green-900 p-3 text-xs text-green-600"><summary className="cursor-pointer">[RESTORE ENCRYPTED-KEY BACKUP]</summary><div className="mt-3 space-y-3"><TerminalInput aria-label="Restored profile name" placeholder="New local profile name" value={restoreName} onChange={event => setRestoreName(event.target.value)} /><label className="block">Choose your Termnl JSON backup<input aria-label="Profile backup file" className="mt-2 block w-full" type="file" accept="application/json,.json" onChange={async event => { const file = event.target.files?.[0]; if (!file) return; try { if (file.size > 5*1024*1024) throw new Error("Backup is too large"); BrowserStore.restore(restoreName, await file.text()); setProfiles(BrowserStore.names()); setLockedName(restoreName); setInput(`unlock ${restoreName}`); write("Backup restored locally. Enter its original passphrase and unlock.", "status") } catch (error) { write(error instanceof Error ? error.message : "Restore failed", "error") } event.target.value = "" }} /></label></div></details>}
-        {resetting && <div role="alertdialog" aria-label="Delete local profile" className="space-y-3 border border-red-500 p-4 text-sm text-red-400"><p>Delete {active} and its keys/history from this browser? This cannot be undone without a backup.</p><button className="mr-4 border border-red-500 p-2" onClick={() => { session.current?.store.reset(); lock(); setProfiles(BrowserStore.names()); setLockedName(""); setResetting(false); setEntries([{ id: ++counter.current, text: "Local profile deleted.", kind: "status" }]) }}>[DELETE THIS PROFILE]</button><button className="border border-green-700 p-2 text-green-400" onClick={() => setResetting(false)}>[CANCEL]</button></div>}
-        <p className="text-[10px] leading-relaxed text-yellow-600">Prototype: no security review, forward secrecy or remote signing. Public relays can lose messages. A compromised page can read unlocked keys. Peer text is untrusted. Back up before clearing browser data. Auto-sync: every 30 seconds while unlocked.</p>
+        {resetting && <div role="alertdialog" aria-label="Delete local profile" className="space-y-3 border border-red-500 p-4 text-sm text-red-400"><p>Delete {active} and its keys/history from this browser? This cannot be undone without a backup.</p><button className="mr-4 border border-red-500 p-2" onClick={() => { session.current?.store.reset(); lock(); setProfiles(BrowserStore.names()); setLockedName(BrowserStore.names()[0] || ""); setResetting(false); setEntries([{ id: ++counter.current, text: "Local profile deleted.", kind: "status" }]) }}>[DELETE THIS PROFILE]</button><button className="border border-green-700 p-2 text-green-400" onClick={() => setResetting(false)}>[CANCEL]</button></div>}
+        <p className="text-[10px] leading-relaxed text-yellow-600">Prototype: no security review, forward secrecy or remote signing. Public relays can lose messages. A compromised page can read unlocked keys. Peer text is untrusted. Back up before clearing browser data. New messages are fetched every 30 seconds while unlocked.</p>
       </div>
     </div>
   </main>
