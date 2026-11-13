@@ -182,11 +182,6 @@ span.terminal-cursor-block {
   }
 }
 
-/* Consistent button styling across all pages */
-button {
-  font-family: "Courier New", monospace !important;
-}
-
 /* Ensure consistent terminal styling */
 .terminal-window {
   background: #000;
@@ -199,3 +194,42 @@ button {
 .loading-cursor {
   animation: terminal-cursor-blink 1s infinite;
 }
+
+/* Termnl themes. Light is the default; .dark is the green-on-black terminal. */
+:root {
+  --t-page: #f6f8f6; --t-panel: #ffffff; --t-field: #ffffff;
+  --t-ink: #0c1f17; --t-body: #3a4a42; --t-muted: #66736b;
+  --t-accent: #0b6b43; --t-accent-ink: #ffffff;
+  --t-line: #e1e7e2; --t-line-strong: #bccabf;
+  --t-warn: #7a5200; --t-warn-bg: #fff8e6; --t-warn-line: #ecd9a6; --t-danger: #b42318;
+  --t-font: var(--font-geist-sans), system-ui, sans-serif;
+  --t-shadow: 0 1px 2px rgb(12 31 23 / 0.05), 0 12px 32px rgb(12 31 23 / 0.07);
+  --btn-bg: var(--t-accent); --btn-fg: #ffffff; --btn-hover-bg: #095235; --btn-hover-fg: #ffffff;
+  --btn-radius: 9999px; --btn-case: none; --btn-l: ""; --btn-r: "";
+  --radius: 0.75rem;
+}
+.dark {
+  --t-page: #000000; --t-panel: #030712; --t-field: #000000;
+  --t-ink: #86efac; --t-body: #22c55e; --t-muted: #16a34a;
+  --t-accent: #4ade80; --t-accent-ink: #000000;
+  --t-line: #14532d; --t-line-strong: #15803d;
+  --t-warn: #eab308; --t-warn-bg: transparent; --t-warn-line: #713f12; --t-danger: #f87171;
+  --t-font: "Courier New", monospace;
+  --t-shadow: none;
+  --btn-bg: transparent; --btn-fg: var(--t-accent); --btn-hover-bg: var(--t-accent); --btn-hover-fg: #000000;
+  --btn-radius: 0; --btn-case: uppercase; --btn-l: "["; --btn-r: "]";
+  --radius: 0px;
+}
+body { background: var(--t-page); color: var(--t-body); font-family: var(--t-font); }
+.frame { background: var(--t-panel); border: 1px solid var(--t-line-strong); border-radius: var(--radius); box-shadow: var(--t-shadow); overflow: hidden; }
+.dark .frame { background: var(--t-page); }
+.btn, .btn-sm {
+  display: inline-block; background: var(--btn-bg); color: var(--btn-fg); border: 2px solid var(--t-accent);
+  border-radius: var(--btn-radius); text-transform: var(--btn-case); padding: 0.7rem 1.5rem; font-weight: 600; text-align: center;
+}
+.btn-sm { background: transparent; color: var(--t-accent); border-width: 1px; padding: 0.4rem 0.9rem; font-size: 0.8rem; font-weight: 500; }
+.btn::before, .btn-sm::before { content: var(--btn-l); }
+.btn::after, .btn-sm::after { content: var(--btn-r); }
+.btn:hover:not(:disabled), .btn-sm:hover:not(:disabled) { background: var(--btn-hover-bg); color: var(--btn-hover-fg); }
+.btn:focus-visible, .btn-sm:focus-visible { outline: 2px solid var(--t-accent); outline-offset: 2px; }
+.btn:disabled, .btn-sm:disabled { opacity: 0.4; }

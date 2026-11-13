@@ -1,6 +1,8 @@
 import type React from "react"
 import type { Metadata } from "next"
 import "./globals.css"
+import { GeistSans } from "geist/font/sans"
+import { ThemeProvider } from "@/components/theme-provider"
 import { SITE_CONFIG } from "@/lib/constants"
 
 
@@ -55,8 +57,10 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
-      <body className="font-mono">{children}</body>
+    <html lang="en" className={GeistSans.variable} suppressHydrationWarning>
+      <body>
+        <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>{children}</ThemeProvider>
+      </body>
     </html>
   )
 }

@@ -8,8 +8,8 @@ export const TerminalInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HT
   ({ className = "", style, ...props }, ref) => (
     <input
       ref={ref}
-      className={`w-full bg-black border border-green-400 text-green-400 font-mono focus:border-green-300 focus:outline-none focus:ring-1 focus:ring-green-300 p-2 ${className}`}
-      style={{ caretColor: "#4ade80", fontFamily: '"Courier New", monospace', fontSize: "16px", ...style }}
+      className={`w-full rounded-md border border-t-line-strong bg-t-field p-2 font-mono text-t-ink caret-t-accent focus:border-t-accent focus:outline-none focus:ring-1 focus:ring-t-accent ${className}`}
+      style={{ fontSize: "16px", ...style }}
       {...props}
     />
   ),
