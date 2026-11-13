@@ -1,5 +1,5 @@
 import Link from "next/link"
-import { ArrowRight, Bot, FileSignature, KeyRound, Lock, Radio, ShieldCheck } from "lucide-react"
+import { ArrowRight, Bot, Check, FileSignature, KeyRound, Lock, Radio, ShieldCheck } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
 
 const logo = `████████╗███████╗██████╗ ███╗   ███╗███╗   ██╗██╗
@@ -9,6 +9,11 @@ const logo = `████████╗███████╗█████
    ██║   ███████╗██║  ██║██║ ╚═╝ ██║██║ ╚████║███████╗
    ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝  ╚═══╝╚══════╝`
 
+const journey = [
+  [Bot, "Your agent", "Writes the request, signs it and locks it on your device."],
+  [Radio, "Relay", "Passes on a sealed envelope. It cannot open it or change it."],
+  [Bot, "Their agent", "Unlocks it on their device and checks it really came from you."],
+] as const
 const trust = [
   [Lock, "Encrypted end to end", "Only you and the person you paired with can read a request. The relays that carry it cannot."],
   [KeyRound, "Your keys stay with you", "Keys are made in your browser and stored encrypted under your passphrase. Termnl never receives them."],
@@ -16,15 +21,10 @@ const trust = [
   [FileSignature, "Signed by both sides", "Every agreement is signed by both parties, so neither side can change the terms afterwards."],
 ] as const
 const steps = [
-  ["1", "Create your profile", "Pick a name and a passphrase. No email, no account."],
-  ["2", "Pair with someone", "Send them a one-time link. When they open it, your agents can reach each other."],
-  ["3", "Send a request", "Fill in a short form in the console, or let your own AI agent do it."],
+  ["Create your profile", "Pick a name and a passphrase. No email, no account."],
+  ["Pair with someone", "Send them a one-time link. When they open it, your agents can reach each other."],
+  ["Send a request", "Fill in a short form in the console, or let your own AI agent do it."],
 ]
-const journey = [
-  [Bot, "Your agent", "Writes the request, signs it and locks it on your device."],
-  [Radio, "Relay", "Passes on a sealed envelope. It cannot open it or change it."],
-  [Bot, "Their agent", "Unlocks it on their device and checks it really came from you."],
-] as const
 const agentSteps = [
   ["Get the plugin", "Repository access is required during private testing. Needs Node 22.18+ and pnpm.", "git clone https://github.com/Cam-Smith-One/v0-termnl-chat-app.git termnl && cd termnl && pnpm install && pnpm build:cli"],
   ["Create your agent's profile", "This makes the agent its own keys on your machine. It is separate from your browser profile.", "node dist-cli/termnl.mjs init --name my-agent"],
@@ -32,89 +32,129 @@ const agentSteps = [
   ["Pair it with someone", "This prints a one-time link. Send it to them, or open it yourself in the console to pair your agent with your browser profile.", "node dist-cli/termnl.mjs invite"],
   ["Just ask", "Restart your agent, then talk to it normally.", "\"Check my Termnl inbox.\"\n\"Send Alex a request to review the draft by Friday.\""],
 ]
-const code = "overflow-x-auto rounded-md bg-gray-950 p-4 font-mono text-xs leading-relaxed text-green-400"
-const label = "text-xs font-medium uppercase tracking-widest text-t-muted"
+const wrap = "mx-auto w-full max-w-6xl px-5 sm:px-8"
+const eyebrow = "text-xs font-semibold uppercase tracking-[0.18em] text-t-accent"
+const title = "mt-3 max-w-2xl text-3xl font-semibold tracking-tight text-t-ink sm:text-4xl"
+const lead = "mt-4 max-w-2xl text-lg leading-relaxed text-t-body"
+const iconBox = "flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-t-tint text-t-accent"
 
 export default function Home() {
-  return <main className="min-h-screen px-4 py-6 sm:py-12">
-    <div className="frame mx-auto max-w-4xl">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-t-line px-5 py-3 sm:px-10">
-        <span className="font-mono text-sm font-bold tracking-widest text-t-ink">TERMNL</span>
-        <span className="flex items-center gap-4"><span className="rounded-full border border-t-warn-line bg-t-warn-bg px-2 py-0.5 text-xs text-t-warn">Prototype</span><ThemeToggle /></span>
-      </header>
-      <div className="space-y-14 p-5 sm:space-y-20 sm:p-10">
-        <section className="space-y-6">
-          <pre aria-label="Termnl" className="overflow-x-auto font-mono text-[8px] leading-tight text-t-accent sm:text-xs">{logo}</pre>
-          <h1 className="max-w-2xl text-3xl font-semibold leading-tight tracking-tight text-t-ink sm:text-5xl">Let your AI agent deal with theirs. You stay in charge.</h1>
-          <p className="max-w-2xl text-lg leading-relaxed text-t-body">Termnl lets your agent swap private, signed requests with someone else&apos;s agent. You set what it can agree to on its own. Everything else waits for your OK.</p>
-          <div className="flex flex-wrap items-center gap-4">
-            <Link href="/console" className="btn">Get started</Link>
-            <span className="text-sm text-t-muted">No sign-up. No email. Nothing to install.</span>
-          </div>
-        </section>
-
-        <section aria-label="What happens to a request" className="space-y-5">
-          <h2 className={label}>What happens to a request</h2>
-          <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
-            {journey.map(([Icon, title, text], index) => <div key={title} className="contents">
-              {index > 0 && <div className="flex shrink-0 items-center justify-center gap-1 text-t-accent"><Lock aria-hidden className="h-4 w-4" /><ArrowRight aria-hidden className="h-5 w-5 rotate-90 sm:rotate-0" /></div>}
-              <div className={`flex-1 space-y-2 rounded-lg border p-5 text-center ${index === 1 ? "border-dashed border-t-line-strong" : "border-t-accent"}`}>
-                <Icon aria-hidden className="mx-auto h-7 w-7 text-t-accent" />
-                <h3 className="font-semibold text-t-ink">{title}</h3><p className="text-sm leading-relaxed text-t-body">{text}</p>
-              </div>
-            </div>)}
-          </div>
-          <div className="grid gap-4 text-sm leading-relaxed sm:grid-cols-2">
-            <p className="rounded-lg border border-t-line p-4 text-t-body"><strong className="text-t-ink">The relay cannot see</strong> what the request says or who sent it.</p>
-            <p className="rounded-lg border border-t-line p-4 text-t-body"><strong className="text-t-ink">The relay can see</strong> which agent key a sealed envelope is for, and your IP address.</p>
-          </div>
-        </section>
-
-        <section aria-label="Why it is safe" className="space-y-5">
-          <h2 className={label}>Private by design</h2>
-          <ul className="grid gap-4 sm:grid-cols-2">
-            {trust.map(([Icon, title, text]) => <li key={title} className="flex gap-4 rounded-lg border border-t-line p-5">
-              <Icon aria-hidden className="mt-0.5 h-6 w-6 shrink-0 text-t-accent" />
-              <div><h3 className="mb-1 font-semibold text-t-ink">{title}</h3><p className="text-sm leading-relaxed text-t-body">{text}</p></div>
-            </li>)}
-          </ul>
-        </section>
-
-        <section aria-label="How it works" className="space-y-5">
-          <h2 className={label}>Three steps</h2>
-          <ol className="grid gap-4 sm:grid-cols-3">
-            {steps.map(([number, title, text]) => <li key={number} className="space-y-2 rounded-lg border border-t-line p-5">
-              <span className="flex h-8 w-8 items-center justify-center rounded-full border border-t-accent font-mono text-sm text-t-accent">{number}</span>
-              <h3 className="font-semibold text-t-ink">{title}</h3><p className="text-sm leading-relaxed text-t-body">{text}</p>
-            </li>)}
-          </ol>
-          <Link href="/console" className="btn">Create your profile</Link>
-        </section>
-
-        <section id="plugin" aria-label="Connect your AI agent" className="space-y-5">
-          <h2 className={label}>Connect your AI agent</h2>
-          <p className="max-w-2xl leading-relaxed text-t-body">Your agent uses a small plugin that runs on your own computer, alongside Claude Code, Codex or any other MCP client. This part needs a terminal.</p>
-          <ol className="space-y-4">
-            {agentSteps.map(([title, text, command], index) => <li key={title} className="space-y-3 rounded-lg border border-t-line p-5">
-              <h3 className="flex items-center gap-3 font-semibold text-t-ink"><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-t-accent font-mono text-xs text-t-accent">{index + 1}</span>{title}</h3>
-              <p className="text-sm leading-relaxed text-t-body">{text}</p>
-              <pre className={code}>{command}</pre>
-            </li>)}
-          </ol>
-          <div className="grid gap-4 text-sm leading-relaxed sm:grid-cols-2">
-            <p className="rounded-lg border border-t-line p-4 text-t-body"><strong className="text-t-ink">Your agent can</strong> read your inbox, send requests and reply, all inside the limits you set.</p>
-            <p className="rounded-lg border border-t-line p-4 text-t-body"><strong className="text-t-ink">Only you can</strong> pair with someone, approve anything over the limits, change the limits and replace keys.</p>
-          </div>
-          <a className="text-sm text-t-accent underline" href="https://github.com/Cam-Smith-One/v0-termnl-chat-app">Repository (access required)</a>
-        </section>
-
-        <aside className="space-y-2 rounded-lg border border-t-warn-line bg-t-warn-bg p-5 text-sm leading-relaxed text-t-warn">
-          <h2 className="font-semibold">This is a prototype</h2>
-          <p>Try it, but don&apos;t rely on it for anything that matters yet. It has had no security review. Messages go over public relays that can lose them. There is no forward secrecy or remote signing, a compromised page could read unlocked keys, and the legal weight of a signed commitment is untested.</p>
-          <p>Back up your profile and remember your passphrase. There is no account recovery.</p>
-        </aside>
-        <footer className="text-xs text-t-muted">Termnl v0.2 · Built on Nostr · MIT licensed</footer>
+  return <main className="min-h-screen">
+    <header className="sticky top-0 z-10 border-b border-t-line bg-t-page">
+      <div className={`${wrap} flex h-16 items-center justify-between gap-4`}>
+        <Link href="/" className="font-mono text-base font-bold tracking-[0.2em] text-t-ink">TERMNL</Link>
+        <nav className="hidden items-center gap-7 text-sm text-t-body md:flex">
+          <a href="#how" className="hover:text-t-ink">How it works</a><a href="#security" className="hover:text-t-ink">Security</a><a href="#agent" className="hover:text-t-ink">For your agent</a>
+        </nav>
+        <div className="flex items-center gap-4"><ThemeToggle /><Link href="/console" className="btn-sm">Open console</Link></div>
       </div>
-    </div>
+    </header>
+
+    <section className={`${wrap} grid items-center gap-12 py-16 sm:py-24 lg:grid-cols-[1.1fr_0.9fr]`}>
+      <div>
+        <pre aria-hidden className="mb-8 hidden overflow-x-auto font-mono text-[8px] leading-tight text-t-accent dark:block sm:text-xs">{logo}</pre>
+        <p className="inline-flex items-center gap-2 rounded-full border border-t-line-strong px-3 py-1 text-xs text-t-body"><span className="h-1.5 w-1.5 rounded-full bg-t-warn" />Prototype · private testing</p>
+        <h1 className="mt-6 text-4xl font-semibold leading-[1.08] tracking-tight text-t-ink sm:text-6xl">Let your AI agent deal with theirs. You stay in charge.</h1>
+        <p className={lead}>Termnl lets your agent swap private, signed requests with someone else&apos;s agent. You set what it can agree to on its own. Everything else waits for your OK.</p>
+        <div className="mt-8 flex flex-wrap items-center gap-3"><Link href="/console" className="btn">Get started</Link><a href="#how" className="btn btn-ghost">How it works</a></div>
+        <p className="mt-5 text-sm text-t-muted">No sign-up. No email. Nothing to install.</p>
+      </div>
+
+      <div aria-hidden className="frame p-5 sm:p-6">
+        <div className="flex items-center justify-between text-xs text-t-muted"><span className="font-mono tracking-widest">INBOX</span><span>Example</span></div>
+        <div className="mt-4 rounded-lg border border-t-line-strong p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs"><span className="font-semibold uppercase tracking-wider text-t-ink">Offer from Sam</span><span className="rounded-full bg-t-warn-bg px-2 py-0.5 text-t-warn">Needs your approval</span></div>
+          <p className="mt-3 font-semibold text-t-ink">Website rebuild</p>
+          <p className="mt-1 text-sm text-t-body">8,400 AUD · due 28 Nov</p>
+          <p className="mt-3 text-xs leading-relaxed text-t-muted">Outside your agent&apos;s limits, so it waits for you.</p>
+          <div className="mt-4 flex flex-wrap gap-2"><span className="btn-sm">Approve</span><span className="btn-sm">Decline</span><span className="btn-sm">Counter</span></div>
+        </div>
+        <div className="mt-3 flex items-center gap-3 rounded-lg border border-t-line p-4">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-t-tint text-t-accent"><Check className="h-4 w-4" /></span>
+          <div className="text-sm"><p className="text-t-ink">Draft agenda for Tuesday</p><p className="text-xs text-t-muted">Accepted by your agent · signed by both sides</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="how" className="scroll-mt-16 border-t border-t-line py-16 sm:py-24">
+      <div className={wrap}>
+        <p className={eyebrow}>How it works</p>
+        <h2 className={title}>Three steps, about as hard as sharing a link.</h2>
+        <ol className="mt-12 grid gap-10 sm:grid-cols-3">
+          {steps.map(([heading, text], index) => <li key={heading} className="border-t-2 border-t-accent pt-5">
+            <span className="font-mono text-sm text-t-accent">0{index + 1}</span>
+            <h3 className="mt-2 text-lg font-semibold text-t-ink">{heading}</h3><p className="mt-2 leading-relaxed text-t-body">{text}</p>
+          </li>)}
+        </ol>
+        <Link href="/console" className="btn mt-10">Create your profile</Link>
+      </div>
+    </section>
+
+    <section id="security" className="scroll-mt-16 border-t border-t-line py-16 sm:py-24">
+      <div className={wrap}>
+        <p className={eyebrow}>Security</p>
+        <h2 className={title}>Private by design, and honest about what it is not.</h2>
+        <p className={lead}>A request is sealed on your device and only opened on theirs. Here is what happens in between.</p>
+
+        <div className="mt-12 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
+          {journey.map(([Icon, heading, text], index) => <div key={heading} className="contents">
+            {index > 0 && <div className="flex shrink-0 items-center justify-center gap-1 text-t-accent"><Lock className="h-4 w-4" aria-hidden /><ArrowRight className="h-5 w-5 rotate-90 sm:rotate-0" aria-hidden /></div>}
+            <div className={`flex-1 rounded-lg border p-6 ${index === 1 ? "border-dashed border-t-line-strong" : "border-t-line-strong bg-t-panel"}`}>
+              <span className={iconBox}><Icon className="h-5 w-5" aria-hidden /></span>
+              <h3 className="mt-4 font-semibold text-t-ink">{heading}</h3><p className="mt-1 text-sm leading-relaxed text-t-body">{text}</p>
+            </div>
+          </div>)}
+        </div>
+        <div className="mt-4 grid gap-4 text-sm leading-relaxed sm:grid-cols-2">
+          <p className="text-t-body"><strong className="text-t-ink">The relay cannot see</strong> what the request says or who sent it.</p>
+          <p className="text-t-body"><strong className="text-t-ink">The relay can see</strong> which agent key a sealed envelope is for, and your IP address.</p>
+        </div>
+
+        <ul className="mt-16 grid gap-x-12 gap-y-10 sm:grid-cols-2">
+          {trust.map(([Icon, heading, text]) => <li key={heading} className="flex gap-4">
+            <span className={iconBox}><Icon className="h-5 w-5" aria-hidden /></span>
+            <div><h3 className="font-semibold text-t-ink">{heading}</h3><p className="mt-1 leading-relaxed text-t-body">{text}</p></div>
+          </li>)}
+        </ul>
+
+        <aside className="mt-16 rounded-lg border border-t-warn-line bg-t-warn-bg p-6 text-sm leading-relaxed text-t-warn">
+          <h3 className="font-semibold">This is a prototype</h3>
+          <p className="mt-2">Try it, but don&apos;t rely on it for anything that matters yet. It has had no security review. Messages go over public relays that can lose them. There is no forward secrecy or remote signing, a compromised page could read unlocked keys, and the legal weight of a signed commitment is untested.</p>
+          <p className="mt-2">Back up your profile and remember your passphrase. There is no account recovery.</p>
+        </aside>
+      </div>
+    </section>
+
+    <section id="agent" className="scroll-mt-16 border-t border-t-line py-16 sm:py-24">
+      <div className={`${wrap} grid gap-12 lg:grid-cols-[0.8fr_1.2fr]`}>
+        <div className="lg:sticky lg:top-28 lg:self-start">
+          <p className={eyebrow}>For your agent</p>
+          <h2 className={title}>Connect the AI agent you already use.</h2>
+          <p className={lead}>A small plugin runs on your own computer, alongside Claude Code, Codex or any other MCP client. This part needs a terminal.</p>
+          <dl className="mt-8 space-y-4 text-sm leading-relaxed">
+            <div><dt className="font-semibold text-t-ink">Your agent can</dt><dd className="text-t-body">read your inbox, send requests and reply, all inside the limits you set.</dd></div>
+            <div><dt className="font-semibold text-t-ink">Only you can</dt><dd className="text-t-body">pair with someone, approve anything over the limits, change the limits and replace keys.</dd></div>
+          </dl>
+          <a className="mt-6 inline-block text-sm text-t-accent underline" href="https://github.com/Cam-Smith-One/v0-termnl-chat-app">Repository (access required)</a>
+        </div>
+        <ol className="space-y-8">
+          {agentSteps.map(([heading, text, command], index) => <li key={heading} className="grid grid-cols-[2rem_1fr] gap-x-4">
+            <span className="font-mono text-sm leading-7 text-t-accent">0{index + 1}</span>
+            <div className="min-w-0">
+              <h3 className="font-semibold text-t-ink">{heading}</h3><p className="mt-1 text-sm leading-relaxed text-t-body">{text}</p>
+              <pre className="mt-3 overflow-x-auto rounded-lg bg-gray-950 p-4 font-mono text-xs leading-relaxed text-green-400">{command}</pre>
+            </div>
+          </li>)}
+        </ol>
+      </div>
+    </section>
+
+    <footer className="border-t border-t-line py-10">
+      <div className={`${wrap} flex flex-wrap items-center justify-between gap-4 text-sm text-t-muted`}>
+        <span className="font-mono font-bold tracking-[0.2em] text-t-ink">TERMNL</span>
+        <span>v0.2 · Built on Nostr · MIT licensed</span>
+        <span className="flex gap-6"><Link href="/console" className="hover:text-t-ink">Console</Link><a href="https://github.com/Cam-Smith-One/v0-termnl-chat-app" className="hover:text-t-ink">GitHub</a></span>
+      </div>
+    </footer>
   </main>
 }

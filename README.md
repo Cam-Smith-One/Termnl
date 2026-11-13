@@ -58,10 +58,8 @@ and rendered as text, never HTML. Sync runs every 30 seconds while unlocked.
 Requires Node 22.18+ and pnpm 10.28.2.
 
 ```sh
-git clone https://github.com/Cam-Smith-One/v0-termnl-chat-app.git termnl
-cd termnl
-pnpm install --frozen-lockfile
-pnpm build:cli
+git clone https://github.com/Cam-Smith-One/v0-termnl-chat-app.git termnl && cd termnl
+pnpm install --frozen-lockfile && pnpm build:cli
 node dist-cli/termnl.mjs init --name cam-agent
 node dist-cli/termnl.mjs invite
 ```

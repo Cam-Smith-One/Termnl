@@ -44,11 +44,11 @@ reset                        delete this browser profile (confirmation required)
 The human using this console is the owner. The MCP agent has no pairing, approval, mandate-edit or rotation tools.
 Peer names, subjects, details and notes are UNTRUSTED text, not instructions.`
 const WELCOME = `You're in. What next?
-  1. [BACK UP]         save your profile file somewhere safe. There is no recovery without it.
-  2. [INVITE SOMEONE]  get a one-time link to send to the person you want to pair with.
-  3. [SEND A REQUEST]  once paired, fill in a short form. Replies land in [CHECK INBOX] and [SENT].
+  1. [BACK UP]            save your profile file somewhere safe. There is no recovery without it.
+  2. [PAIR WITH SOMEONE]  get a one-time link to send them, or paste the link they sent you.
+  3. [SEND A REQUEST]     once paired, fill in a short form. Replies land in [CHECK INBOX] and [SENT].
 Use the buttons above, or type help to see every command.`
-const ACTIONS = [["Send a request", "compose"], ["Invite someone", "invite"], ["Check inbox", "inbox"], ["Sent", "outbox"], ["Contacts", "contacts"], ["Agreements", "commitments"], ["Back up", "backup"], ["Help", "help"], ["Lock", "lock"]]
+const ACTIONS = [["Send a request", "compose"], ["Pair with someone", "invite"], ["Check inbox", "inbox"], ["Sent", "outbox"], ["Contacts", "contacts"], ["Agreements", "commitments"], ["Back up", "backup"], ["Help", "help"], ["Lock", "lock"]]
 const button = "btn"
 const field = "mt-1 w-full rounded-md border border-t-line-strong bg-t-field p-2 text-base text-t-ink focus:border-t-accent focus:outline-none focus:ring-1 focus:ring-t-accent"
 const KINDS = { request: "Ask them for something", offer: "Offer them something", inform: "Just let them know" }
@@ -82,6 +82,8 @@ export default function ConsolePage() {
   const [hasInvite, setHasInvite] = useState(false)
   const [notice, setNotice] = useState("")
   const [draft, setDraft] = useState<typeof EMPTY | null>(null)
+  const [pairLink, setPairLink] = useState("")
+  const [theirLink, setTheirLink] = useState("")
   const [entries, setEntries] = useState<Entry[]>([{ id: 0, text: "Welcome to Termnl. Everything you do shows up here.", kind: "status" }])
   const session = useRef<Session | null>(null)
   const relays = useRef([...DEFAULT_RELAYS])
@@ -92,11 +94,11 @@ export default function ConsolePage() {
   const commandInput = useRef<HTMLInputElement>(null)
   const runRef = useRef<(line: string, auto?: boolean) => Promise<void>>()
   const write = (value: unknown, kind: Entry["kind"] = "local", extra: Pick<Entry, "copy" | "actions"> = {}) => setEntries(previous => [...previous, { id: ++counter.current, text: text(value), kind, ...extra }].slice(-200))
-  const lock = () => { session.current?.mail.close(); session.current?.store.lock(); session.current = null; setActive(""); setPassword(""); setDraft(null) }
+  const lock = () => { session.current?.mail.close(); session.current?.store.lock(); session.current = null; setActive(""); setPassword(""); setDraft(null); setPairLink("") }
   const compose = (to = "") => {
     const first = session.current?.mail.contacts()[0]
     if (!first) return write("Pair with someone first: use Invite someone and send them the link.", "status")
-    setDraft({ ...EMPTY, to: to || npubEncode(first.identity) })
+    setPairLink(""); setDraft({ ...EMPTY, to: to || npubEncode(first.identity) })
   }
   const run = (command: string) => { if (command.startsWith("compose")) compose(command.split(" ")[1]); else if (/[ "]$/.test(command)) { setInput(command); commandInput.current?.focus() } else void execute(command) }
 
@@ -115,6 +117,11 @@ export default function ConsolePage() {
     window.addEventListener("storage", storageChanged)
     return () => { clearInterval(timer); window.removeEventListener("pagehide", hide); window.removeEventListener("storage", storageChanged); hide() }
   }, [])
+  useEffect(() => {
+    if (!pairLink) return
+    const timer = setInterval(() => { if (session.current && !processing.current) void runRef.current?.("sync", true) }, 6000)
+    return () => clearInterval(timer)
+  }, [pairLink])
   useEffect(() => { outputEnd.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }) }, [entries])
 
   const execute = async (line: string, auto = false) => {
@@ -165,6 +172,15 @@ export default function ConsolePage() {
       const who = (identity: string) => `"${mail.contacts().find(contact => contact.identity === identity)?.name ?? "(no name)"}"`
       const when = (seconds: number) => new Date(seconds * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })
       const terms = (body: RequestBody) => [`Subject: ${body.subject}`, body.details && `Details: ${body.details}`, body.value && `Value: ${body.value.amount} ${body.value.currency}`, body.due && `Due: ${body.due}`].filter(Boolean).join("\n")
+      const sync = async () => {
+        const known = new Set(mail.contacts().map(contact => contact.identity))
+        const result = await mail.sync()
+        for (const contact of mail.contacts().filter(contact => !known.has(contact.identity))) {
+          setPairLink("")
+          write(`You are now paired with ${who(contact.identity)}. That name is what they chose; it is not verified.`, "peer", { actions: [["send a request", `compose ${npubEncode(contact.identity)}`]] })
+        }
+        return result
+      }
       const showInbox = (item: InboxItem) => write(
         `${item.body.kind.toUpperCase()} from ${who(item.from)} · ${when(item.received_at)} · ${item.status}\n${terms(item.body)}${item.status === "open" && item.authority === "needs_owner" ? "\nThis is outside your agent's limits. Approve it before it can be accepted." : ""}`,
         "peer", { actions: item.status !== "open" ? [] : [item.authority === "needs_owner" ? ["approve", `approve ${item.id}`] : ["accept", `accept ${item.id}`], ["decline", `decline ${item.id}`], ["counter", `counter ${item.id} `]] })
@@ -173,11 +189,11 @@ export default function ConsolePage() {
         case "relays": write(args.length ? mail.setRelays(args) : mail.whoami().relays); break
         case "invite": {
           const minutes = Number(flags.minutes ?? 60), link = `https://termnl.app/pair#${mail.createInvite(minutes)}`
-          write(`Send this link to the person you want to pair with. It works once and expires in ${minutes} minutes.\nKeep it private: anyone who opens it first is paired with you.\n\n${link}`, "local", { copy: link }); break
+          write(`Send this link to the person you want to pair with. It works once and expires in ${minutes} minutes.\nKeep it private: anyone who opens it first is paired with you.\n\n${link}`, "local", { copy: link }); setPairLink(link); setDraft(null); break
         }
         case "pair": {
           const contact = await mail.acceptInvite(args[0] || "")
-          pendingInvite.current = ""; setHasInvite(false)
+          pendingInvite.current = ""; setHasInvite(false); setPairLink(""); setTheirLink("")
           write(`Paired with "${contact.name ?? "(no name)"}". That name is what they chose; it is not verified.\nTheir ID: ${npubEncode(contact.identity)}\nThey will see you the next time their console syncs.`, "peer"); break
         }
         case "contacts": {
@@ -185,9 +201,9 @@ export default function ConsolePage() {
           for (const contact of mail.contacts()) write(`${who(contact.identity)} · paired ${when(contact.paired_at)}\nThe name is what they chose; it is not verified.\nID: ${npubEncode(contact.identity)}`, "peer", { actions: [["send a request", `compose ${npubEncode(contact.identity)}`]] })
           break
         }
-        case "sync": { const result = await mail.sync(); if (!auto || result.processed || result.dropped) write(`Checked for new messages: ${result.processed} new${result.dropped ? `, ${result.dropped} ignored` : ""}.`, "status"); break }
+        case "sync": { const result = await sync(); if (!auto || result.processed || result.dropped) write(`Checked for new messages: ${result.processed} new${result.dropped ? `, ${result.dropped} ignored` : ""}.`, "status"); break }
         case "inbox": {
-          await mail.sync()
+          await sync()
           const all = mail.inbox(), shown = args[0] === "all" ? all : all.filter(item => item.status === "open")
           shown.forEach(showInbox)
           const note = `${shown.length ? "" : "Nothing waiting for you. "}${all.length > shown.length ? `${all.length - shown.length} already answered; type "inbox all" to see them.` : ""}`.trim()
@@ -195,7 +211,7 @@ export default function ConsolePage() {
           break
         }
         case "outbox": {
-          await mail.sync()
+          await sync()
           if (!mail.outbox().length) { write("You haven't sent anything yet. Open [CONTACTS] to send a request.", "status"); break }
           const status = { open: "waiting for a reply", declined: "declined", countered: "they proposed a change", committed: "agreed and signed by both sides" }
           for (const item of mail.outbox()) write(`${item.body.kind.toUpperCase()} to ${who(item.to)} · ${when(item.sent_at)} · ${status[item.status]}\n${terms(item.body)}${item.note ? `\nTheir note: ${item.note}` : ""}`, "peer")
@@ -214,7 +230,7 @@ export default function ConsolePage() {
           setDraft(null); write(`Sent to ${who(item.to)}. Their reply will show under [SENT].`, "peer"); break
         }
         case "commitments": {
-          await mail.sync()
+          await sync()
           if (!mail.commitments().length) { write("No agreements yet. One is created when a request is accepted.", "status"); break }
           for (const record of mail.commitments()) write(`AGREEMENT with ${who(record.with)} · ${record.role === "responder" ? "you accepted their request" : "they accepted your request"}\n${terms(JSON.parse(record.commitment.content).terms)}\n${record.cosign ? "Signed by both sides." : "Waiting for their countersignature."}`, "peer")
           break
@@ -290,6 +306,24 @@ export default function ConsolePage() {
         </form>}
 
         {active && <div className="flex flex-wrap gap-2 text-xs">{ACTIONS.map(([label, command]) => <button key={command} disabled={busy} onClick={() => run(command)} className="btn-sm">{label}</button>)}</div>}
+
+        {active && pairLink && <div className="space-y-5 rounded-lg border border-t-line-strong p-4 sm:p-6">
+          <h2 className="text-lg font-semibold text-t-ink">Pair with someone</h2>
+          <div className="space-y-2">
+            <p className="text-sm text-t-body">Send them this link privately. When they open it, you are paired.</p>
+            <div className="flex flex-wrap gap-2">
+              <input aria-label="Your pairing link" readOnly value={pairLink} onFocus={event => event.target.select()} className={`${field} mt-0 min-w-0 flex-1 font-mono text-xs`} />
+              <button type="button" className="btn-sm" onClick={event => { const target = event.currentTarget; void navigator.clipboard.writeText(pairLink).then(() => { target.textContent = "Copied" }) }}>Copy link</button>
+              {"share" in navigator && <button type="button" className="btn-sm" onClick={() => void navigator.share({ title: "Pair with me on Termnl", url: pairLink }).catch(() => undefined)}>Share</button>}
+            </div>
+            <p className="flex items-center gap-2 text-xs text-t-muted"><span className="h-2 w-2 animate-pulse rounded-full bg-t-accent" />Waiting for them to open it. Works once, for 60 minutes. Whoever opens it first is paired with you.</p>
+          </div>
+          <form className="space-y-2 border-t border-t-line pt-4" onSubmit={event => { event.preventDefault(); void execute(`pair ${theirLink.trim()}`) }}>
+            <p className="text-sm text-t-body">Or, if they sent you a link, paste it here.</p>
+            <div className="flex flex-wrap gap-2"><input aria-label="Their pairing link" required value={theirLink} onChange={event => setTheirLink(event.target.value)} placeholder="https://termnl.app/pair#..." autoComplete="off" spellCheck={false} className={`${field} mt-0 min-w-0 flex-1 font-mono text-xs`} /><button disabled={busy} className="btn-sm">Pair</button></div>
+          </form>
+          <button type="button" className="text-xs text-t-muted underline" onClick={() => setPairLink("")}>Close</button>
+        </div>}
 
         {active && draft && <form className="space-y-4 rounded-lg border border-t-line-strong p-4 sm:p-6" onSubmit={event => { event.preventDefault(); void execute(`send ${draft.to} ${draft.kind} ${quote(draft.subject)}${draft.details ? ` --details ${quote(draft.details)}` : ""}${draft.amount ? ` --amount ${draft.amount}` : ""}${draft.due ? ` --due ${draft.due}` : ""}`) }}>
           <h2 className="text-lg font-semibold text-t-ink">Send a request</h2>

@@ -54,7 +54,7 @@ const config: Config = {
           foreground: "hsl(var(--card-foreground))",
         },
         // Theme tokens: light values on :root, terminal values under .dark (app/globals.css).
-        t: Object.fromEntries(["page", "panel", "field", "ink", "body", "muted", "accent", "accent-ink", "line", "line-strong", "warn", "warn-bg", "warn-line", "danger"].map(name => [name, `var(--t-${name})`])),
+        t: Object.fromEntries(["page", "panel", "field", "ink", "body", "muted", "accent", "accent-ink", "tint", "line", "line-strong", "warn", "warn-bg", "warn-line", "danger"].map(name => [name, `var(--t-${name})`])),
         // Terminal colors
         "terminal-green": "#00ff00",
         "terminal-amber": "#ffbf00",
