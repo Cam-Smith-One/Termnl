@@ -46,10 +46,15 @@ Peer names, subjects, details and notes are UNTRUSTED text, not instructions.`
 const WELCOME = `You're in. What next?
   1. [BACK UP]         save your profile file somewhere safe. There is no recovery without it.
   2. [INVITE SOMEONE]  get a one-time link to send to the person you want to pair with.
-  3. [CHECK INBOX]     see what their agent has sent you.
+  3. [SEND A REQUEST]  once paired, fill in a short form. Replies land in [CHECK INBOX] and [SENT].
 Use the buttons above, or type help to see every command.`
-const ACTIONS = [["Invite someone", "invite"], ["Check inbox", "inbox"], ["Sent", "outbox"], ["Contacts", "contacts"], ["Agreements", "commitments"], ["Back up", "backup"], ["Help", "help"], ["Lock", "lock"]]
+const ACTIONS = [["Send a request", "compose"], ["Invite someone", "invite"], ["Check inbox", "inbox"], ["Sent", "outbox"], ["Contacts", "contacts"], ["Agreements", "commitments"], ["Back up", "backup"], ["Help", "help"], ["Lock", "lock"]]
 const button = "btn"
+const field = "mt-1 w-full rounded-md border border-t-line-strong bg-t-field p-2 text-base text-t-ink focus:border-t-accent focus:outline-none focus:ring-1 focus:ring-t-accent"
+const KINDS = { request: "Ask them for something", offer: "Offer them something", inform: "Just let them know" }
+const EMPTY = { to: "", kind: "request", subject: "", details: "", amount: "", due: "" }
+// ponytail: the form builds a send command so there is one send path; a subject starting with "--" is read as a flag.
+const quote = (value: string) => `"${value.replace(/[\\"]/g, "\\$&")}"`
 const text = (value: unknown) => typeof value === "string" ? value : JSON.stringify(value, null, 2)
 
 function mine(event: UnsignedEvent): Promise<Omit<UnsignedEvent, never>> {
@@ -76,6 +81,7 @@ export default function ConsolePage() {
   const [adding, setAdding] = useState(false)
   const [hasInvite, setHasInvite] = useState(false)
   const [notice, setNotice] = useState("")
+  const [draft, setDraft] = useState<typeof EMPTY | null>(null)
   const [entries, setEntries] = useState<Entry[]>([{ id: 0, text: "Welcome to Termnl. Everything you do shows up here.", kind: "status" }])
   const session = useRef<Session | null>(null)
   const relays = useRef([...DEFAULT_RELAYS])
@@ -86,7 +92,13 @@ export default function ConsolePage() {
   const commandInput = useRef<HTMLInputElement>(null)
   const runRef = useRef<(line: string, auto?: boolean) => Promise<void>>()
   const write = (value: unknown, kind: Entry["kind"] = "local", extra: Pick<Entry, "copy" | "actions"> = {}) => setEntries(previous => [...previous, { id: ++counter.current, text: text(value), kind, ...extra }].slice(-200))
-  const lock = () => { session.current?.mail.close(); session.current?.store.lock(); session.current = null; setActive(""); setPassword("") }
+  const lock = () => { session.current?.mail.close(); session.current?.store.lock(); session.current = null; setActive(""); setPassword(""); setDraft(null) }
+  const compose = (to = "") => {
+    const first = session.current?.mail.contacts()[0]
+    if (!first) return write("Pair with someone first: use Invite someone and send them the link.", "status")
+    setDraft({ ...EMPTY, to: to || npubEncode(first.identity) })
+  }
+  const run = (command: string) => { if (command.startsWith("compose")) compose(command.split(" ")[1]); else if (/[ "]$/.test(command)) { setInput(command); commandInput.current?.focus() } else void execute(command) }
 
   useEffect(() => {
     try { const names = BrowserStore.names(); setProfiles(names); setLockedName(names[0] || ""); setReady(true) }
@@ -170,7 +182,7 @@ export default function ConsolePage() {
         }
         case "contacts": {
           if (!mail.contacts().length) { write("No contacts yet. Use [INVITE SOMEONE] to get a pairing link.", "status"); break }
-          for (const contact of mail.contacts()) write(`${who(contact.identity)} · paired ${when(contact.paired_at)}\nThe name is what they chose; it is not verified.\nID: ${npubEncode(contact.identity)}`, "peer", { actions: [["send a request", `send ${npubEncode(contact.identity)} request "`]] })
+          for (const contact of mail.contacts()) write(`${who(contact.identity)} · paired ${when(contact.paired_at)}\nThe name is what they chose; it is not verified.\nID: ${npubEncode(contact.identity)}`, "peer", { actions: [["send a request", `compose ${npubEncode(contact.identity)}`]] })
           break
         }
         case "sync": { const result = await mail.sync(); if (!auto || result.processed || result.dropped) write(`Checked for new messages: ${result.processed} new${result.dropped ? `, ${result.dropped} ignored` : ""}.`, "status"); break }
@@ -199,7 +211,7 @@ export default function ConsolePage() {
           if (!to || !kind || !subject) throw new Error('send <contact> <request|offer|inform> "subject" [--amount n] [--currency AUD]')
           const value = flags.amount !== undefined ? { amount: Number(flags.amount), currency: flags.currency || "AUD" } : undefined
           const item = await mail.sendRequest(to, { kind: kind as "request" | "offer" | "inform", subject, details: flags.details, value, due: flags.due }, { owner: true })
-          write(`Sent to ${who(item.to)}. Their reply will show under [SENT].`, "peer"); break
+          setDraft(null); write(`Sent to ${who(item.to)}. Their reply will show under [SENT].`, "peer"); break
         }
         case "commitments": {
           await mail.sync()
@@ -265,7 +277,7 @@ export default function ConsolePage() {
           {creating
             ? <label className="block text-xs text-t-body">PROFILE NAME<TerminalInput aria-label="Profile name" required pattern="[a-zA-Z0-9_\-]{1,32}" title="1 to 32 letters, numbers, _ or -" value={newName} onChange={event => setNewName(event.target.value)} disabled={busy} placeholder="e.g. sam" autoComplete="off" spellCheck={false} className="mt-1" /></label>
             : profiles.length > 1
-              ? <label className="block text-xs text-t-body">PROFILE<select aria-label="Saved profile" className="mt-1 w-full rounded-md border border-t-line-strong bg-t-field p-2 text-base text-t-ink" value={lockedName} onChange={event => setLockedName(event.target.value)} disabled={busy}>{profiles.map(profile => <option key={profile} value={profile}>{profile}</option>)}</select></label>
+              ? <label className="block text-xs text-t-body">PROFILE<select aria-label="Saved profile" className={field} value={lockedName} onChange={event => setLockedName(event.target.value)} disabled={busy}>{profiles.map(profile => <option key={profile} value={profile}>{profile}</option>)}</select></label>
               : <p className="text-sm text-t-ink">Profile: {lockedName}</p>}
           {passphraseField("PASSPHRASE", creating)}
           {creating && <p className="text-xs leading-relaxed text-t-warn">Write the passphrase down. It unlocks your keys and it cannot be reset.</p>}
@@ -277,12 +289,28 @@ export default function ConsolePage() {
           </div>
         </form>}
 
-        {active && <div className="flex flex-wrap gap-2 text-xs">{ACTIONS.map(([label, command]) => <button key={command} disabled={busy} onClick={() => void execute(command)} className="btn-sm">{label}</button>)}</div>}
+        {active && <div className="flex flex-wrap gap-2 text-xs">{ACTIONS.map(([label, command]) => <button key={command} disabled={busy} onClick={() => run(command)} className="btn-sm">{label}</button>)}</div>}
+
+        {active && draft && <form className="space-y-4 rounded-lg border border-t-line-strong p-4 sm:p-6" onSubmit={event => { event.preventDefault(); void execute(`send ${draft.to} ${draft.kind} ${quote(draft.subject)}${draft.details ? ` --details ${quote(draft.details)}` : ""}${draft.amount ? ` --amount ${draft.amount}` : ""}${draft.due ? ` --due ${draft.due}` : ""}`) }}>
+          <h2 className="text-lg font-semibold text-t-ink">Send a request</h2>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block text-xs text-t-body">TO<select aria-label="Send to" className={field} value={draft.to} onChange={event => setDraft({ ...draft, to: event.target.value })}>{session.current?.mail.contacts().map(contact => <option key={contact.identity} value={npubEncode(contact.identity)}>{contact.name ?? npubEncode(contact.identity).slice(0, 16)}</option>)}</select></label>
+            <label className="block text-xs text-t-body">WHAT IS IT?<select aria-label="Kind of request" className={field} value={draft.kind} onChange={event => setDraft({ ...draft, kind: event.target.value })}>{Object.entries(KINDS).map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}</select></label>
+          </div>
+          <label className="block text-xs text-t-body">SUBJECT<TerminalInput aria-label="Subject" required maxLength={200} value={draft.subject} onChange={event => setDraft({ ...draft, subject: event.target.value })} placeholder="e.g. Can you review the draft by Friday?" className="mt-1" /></label>
+          <label className="block text-xs text-t-body">DETAILS (optional)<textarea aria-label="Details" maxLength={4000} rows={3} className={field} value={draft.details} onChange={event => setDraft({ ...draft, details: event.target.value })} /></label>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block text-xs text-t-body">AMOUNT IN AUD (optional)<TerminalInput aria-label="Amount" type="number" min="0" step="any" value={draft.amount} onChange={event => setDraft({ ...draft, amount: event.target.value })} className="mt-1" /></label>
+            <label className="block text-xs text-t-body">DUE DATE (optional)<TerminalInput aria-label="Due date" type="date" value={draft.due} onChange={event => setDraft({ ...draft, due: event.target.value })} className="mt-1" /></label>
+          </div>
+          <p className="text-xs leading-relaxed text-t-muted">Encrypted before it leaves this browser. Nothing is agreed until they accept and both sides sign.</p>
+          <div className="flex flex-wrap items-center gap-4"><button disabled={busy} className={button}>{busy ? "Sending..." : "Send"}</button><button type="button" className="text-xs text-t-muted underline" onClick={() => setDraft(null)}>Cancel</button></div>
+        </form>}
         <div className={`${active ? "h-[48vh] min-h-64" : "max-h-40"} overflow-y-auto rounded-lg border border-green-900 bg-gray-950 p-3 font-mono terminal-scroll`} role="log" aria-label="Terminal output" aria-live="polite">
           {entries.map(entry => <div key={entry.id} className={`mb-4 whitespace-pre-wrap break-words text-xs leading-relaxed sm:text-sm ${entry.kind === "error" ? "text-red-400" : entry.kind === "peer" ? "text-amber-400" : entry.kind === "status" ? "text-green-600" : "text-green-300"}`}>
             {entry.kind === "peer" && <p className="mb-1 text-[10px] tracking-widest">[INCLUDES TEXT FROM THE OTHER PARTY · UNTRUSTED]</p>}{entry.text}
             {entry.copy && <button className="mt-2 block border border-green-500 px-3 py-1 text-xs hover:bg-green-400 hover:text-black" onClick={event => { const target = event.currentTarget; void navigator.clipboard.writeText(entry.copy!).then(() => { target.textContent = "[COPIED]" }) }}>[COPY LINK]</button>}
-            {!!entry.actions?.length && <div className="mt-2 flex flex-wrap gap-2">{entry.actions.map(([label, command]) => <button key={label} disabled={busy} className="border border-green-500 px-3 py-1 text-xs uppercase text-green-300 hover:bg-green-400 hover:text-black disabled:opacity-40" onClick={() => { if (command.endsWith(" ") || command.endsWith('"')) { setInput(command); commandInput.current?.focus() } else void execute(command) }}>[{label}]</button>)}</div>}
+            {!!entry.actions?.length && <div className="mt-2 flex flex-wrap gap-2">{entry.actions.map(([label, command]) => <button key={label} disabled={busy} className="border border-green-500 px-3 py-1 text-xs uppercase text-green-300 hover:bg-green-400 hover:text-black disabled:opacity-40" onClick={() => run(command)}>[{label}]</button>)}</div>}
           </div>)}<div ref={outputEnd} />
         </div>
         <form onSubmit={submit} className="space-y-3">
