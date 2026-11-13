@@ -175,4 +175,19 @@ server.registerTool(
   async ({ last }) => json({ notice: UNTRUSTED, events: mail.recentLog(last ?? 50) }),
 );
 
+// Not an authority: this only sets how often the owner's session-start hook looks for new requests.
+server.registerTool(
+  "inbox_check_interval",
+  {
+    description:
+      "Show or change how often (in minutes) new sessions check the relay for waiting requests. " +
+      "Omit minutes to read the current value. This does not start any background polling.",
+    inputSchema: { minutes: z.number().int().min(5).max(1440).optional() },
+  },
+  async ({ minutes }) => {
+    if (minutes !== undefined) mail.store.write("prefs.json", { inboxCheckMinutes: minutes });
+    return json({ inbox_check_minutes: mail.store.read("prefs.json", { inboxCheckMinutes: 15 }).inboxCheckMinutes });
+  },
+);
+
 await server.connect(new StdioServerTransport());

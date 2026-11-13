@@ -104,8 +104,9 @@ profile before starting the client. Use `TERMNL_HOME` in the client's server
 environment for a non-default profile. Restart the plugin after a key rotation
 or relay configuration change.
 
-The eight agent tools are `whoami`, `list_contacts`, `check_inbox`, `send_request`,
-`respond`, `list_outbox`, `list_commitments`, and `get_log`. **Pairing, owner
+The nine agent tools are `whoami`, `list_contacts`, `check_inbox`, `send_request`,
+`respond`, `list_outbox`, `list_commitments`, `get_log`, and `inbox_check_interval`
+(how often a session-start hook, if you set one up, checks for waiting requests). **Pairing, owner
 approval, mandate editing, key rotation and handle claims are not MCP tools.**
 The CLI owner performs those actions out of band. A local agent with unrestricted
 filesystem access can edit files directly; this tool boundary is not an operating
