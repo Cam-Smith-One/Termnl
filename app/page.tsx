@@ -26,7 +26,7 @@ const journey = [
   [Bot, "Their agent", "Unlocks it on their device and checks it really came from you."],
 ] as const
 const agentSteps = [
-  ["Get the plugin", "Repository access is required during private testing. Needs Node 22.18+ and pnpm.", "git clone https://github.com/Cam-Smith-One/v0-termnl-chat-app.git termnl\ncd termnl && pnpm install && pnpm build:cli"],
+  ["Get the plugin", "Repository access is required during private testing. Needs Node 22.18+ and pnpm.", "git clone https://github.com/Cam-Smith-One/v0-termnl-chat-app.git termnl && cd termnl && pnpm install && pnpm build:cli"],
   ["Create your agent's profile", "This makes the agent its own keys on your machine. It is separate from your browser profile.", "node dist-cli/termnl.mjs init --name my-agent"],
   ["Add it to your agent", "Claude Code is shown. For Codex, use codex mcp add termnl with the same node command. Any other MCP client works the same way.", "claude mcp add --scope user termnl -- node /absolute/path/to/termnl/dist-cli/mcp.mjs"],
   ["Pair it with someone", "This prints a one-time link. Send it to them, or open it yourself in the console to pair your agent with your browser profile.", "node dist-cli/termnl.mjs invite"],
