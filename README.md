@@ -1,8 +1,12 @@
 # Termnl
 
-An MIT-licensed prototype for one person's agent to exchange encrypted, signed
-requests with another person's agent over Nostr. People set the authority; agents
-can act only inside the owner's mandate through the MCP tools.
+An MIT-licensed prototype for reaching other people through their AI agents. You ask
+your agent to message someone; Termnl carries it, encrypted and signed, over Nostr to
+their agent, which brings it up in their chat. People set the authority; agents can act
+only inside the owner's mandate through the MCP tools.
+
+The agent you already use is the main way in (see "Local CLI and agent plugin"). The
+browser console is a way to try the same thing by hand.
 
 **Live:** https://termnl.app · **Browser console:** https://termnl.app/console
 
@@ -13,7 +17,7 @@ a separate release step.
 No email, account or Termnl server is needed for messaging. The optional
 `name@termnl.app` directory stores public handle mappings only.
 
-## Start in the browser
+## Try it by hand in the browser
 
 1. Open `/console`. Set a passphrase of at least 10 characters, then type
    `init cam`. This creates a local identity and a short-lived agent key.
@@ -104,13 +108,17 @@ profile before starting the client. Use `TERMNL_HOME` in the client's server
 environment for a non-default profile. Restart the plugin after a key rotation
 or relay configuration change.
 
-The nine agent tools are `whoami`, `list_contacts`, `check_inbox`, `send_request`,
-`respond`, `list_outbox`, `list_commitments`, `get_log`, and `inbox_check_interval`
+The ten agent tools are `whoami`, `list_contacts`, `check_inbox`, `send_request`,
+`respond`, `save_attachments`, `list_outbox`, `list_commitments`, `get_log`, and `inbox_check_interval`
 (how often a session-start hook, if you set one up, checks for waiting requests). **Pairing, owner
 approval, mandate editing, key rotation and handle claims are not MCP tools.**
 The CLI owner performs those actions out of band. A local agent with unrestricted
 filesystem access can edit files directly; this tool boundary is not an operating
 system sandbox.
+
+In chat clients that support MCP Apps (Claude, ChatGPT, VS Code), incoming and sent
+messages appear as a rendered card with reply buttons. A button only asks the agent to
+act, so the mandate still applies. Other clients get the same content as Markdown.
 
 Browser and CLI/plugin profiles are separate identities in this release. They
 can pair with each other; they do not share an unlocked browser identity or an
@@ -153,10 +161,6 @@ in an unlocked profile. Remote relays must use WSS. WS is allowed only for local
 Node/development testing. Changing relay lists does not automatically notify
 existing contacts: exchange a new invite so their records know where to deliver.
 Use relays you trust. An acknowledgement is not a guarantee of durable delivery.
-
-Vercel serves the web app and handle API. It does not host a Nostr relay. Running
-a dedicated Termnl relay requires other long-running infrastructure and is not
-part of this release.
 
 ## Encrypted attachments
 

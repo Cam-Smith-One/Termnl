@@ -16,20 +16,20 @@ const journey = [
 ] as const
 const trust = [
   [Lock, "Encrypted end to end", "Only you and the person you paired with can read a request. The relays that carry it cannot."],
-  [KeyRound, "Your keys stay with you", "Keys are made in your browser and stored encrypted under your passphrase. Termnl never receives them."],
+  [KeyRound, "Your keys stay with you", "Keys are made on your own device and stay there. Termnl never receives them."],
   [ShieldCheck, "You set the limits", "Your agent can only agree to what you allow. Anything bigger waits for your approval."],
   [FileSignature, "Signed by both sides", "Every agreement is signed by both parties, so neither side can change the terms afterwards."],
 ] as const
 const steps = [
-  ["Create your profile", "Pick a name and a passphrase. No email, no account."],
-  ["Pair with someone", "Send them a one-time link. When they open it, your agents can reach each other."],
-  ["Send a request", "Fill in a short form in the console, or let your own AI agent do it."],
+  ["Connect your agent", "Add Termnl to the AI agent you already use. No email, no account."],
+  ["Pair with someone", "Send them a one-time link. Once they open it, your agent can reach theirs."],
+  ["Just ask", "Tell your agent who to reach and what to say. Their answer comes back in the same chat."],
 ]
 const agentSteps = [
-  ["Create your agent's profile", "Needs Node 22.18 or later. This makes the agent its own keys on your machine, separate from your browser profile.", "npx -y termnl init --name my-agent"],
+  ["Set up Termnl", "Needs Node 22.18 or later. This creates your keys on your own machine. They never leave it.", "npx -y termnl init --name my-agent"],
   ["Add it to your agent", "Claude Code is shown. For Codex, swap claude mcp add --scope user for codex mcp add. Any other MCP client can run the same npx command.", "claude mcp add --scope user termnl -- npx -y -p termnl termnl-mcp"],
-  ["Pair it with someone", "This prints a one-time link. Send it to them, or open it yourself in the console to pair your agent with your browser profile.", "npx -y termnl invite"],
-  ["Just ask", "Restart your agent, then talk to it normally.", "\"Check my Termnl inbox.\"\n\"Send Alex a request to review the draft by Friday.\""],
+  ["Pair it with someone", "This prints a one-time link. Send it to the person you want to reach. Once they open it, your agents know each other.", "npx -y termnl invite"],
+  ["Just ask", "Restart your agent, then talk to it normally.", "\"Ask Alex to review the draft by Friday.\"\n\"Has anyone sent me anything on Termnl?\""],
 ]
 const wrap = "mx-auto w-full max-w-6xl px-5 sm:px-8"
 const eyebrow = "text-xs font-semibold uppercase tracking-[0.18em] text-t-accent"
@@ -45,7 +45,7 @@ export default function Home() {
         <nav className="hidden items-center gap-7 text-sm text-t-body md:flex">
           <a href="#how" className="hover:text-t-ink">How it works</a><a href="#security" className="hover:text-t-ink">Security</a><a href="#agent" className="hover:text-t-ink">For your agent</a>
         </nav>
-        <div className="flex items-center gap-4"><ThemeToggle /><Link href="/console" className="btn-sm">Open console</Link></div>
+        <div className="flex items-center gap-4"><ThemeToggle /><a href="#agent" className="btn-sm">Connect your agent</a></div>
       </div>
     </header>
 
@@ -53,14 +53,14 @@ export default function Home() {
       <div>
         <pre aria-hidden className="mb-8 hidden overflow-x-auto font-mono text-[8px] leading-tight text-t-accent dark:block sm:text-xs">{logo}</pre>
         <p className="inline-flex items-center gap-2 rounded-full border border-t-line-strong px-3 py-1 text-xs text-t-body"><span className="h-1.5 w-1.5 rounded-full bg-t-warn" />Prototype</p>
-        <h1 className="mt-6 text-4xl font-semibold leading-[1.08] tracking-tight text-t-ink sm:text-6xl">Let your AI agent deal with theirs. You stay in charge.</h1>
-        <p className={lead}>Termnl lets your agent swap private, signed requests with someone else&apos;s agent. You set what it can agree to on its own. Everything else waits for your OK.</p>
-        <div className="mt-8 flex flex-wrap items-center gap-3"><Link href="/console" className="btn">Get started</Link><a href="#how" className="btn btn-ghost">How it works</a></div>
-        <p className="mt-5 text-sm text-t-muted">No sign-up. No email. Nothing to install.</p>
+        <h1 className="mt-6 text-4xl font-semibold leading-[1.08] tracking-tight text-t-ink sm:text-6xl">Reach people through their AI agent, from yours.</h1>
+        <p className={lead}>Ask your agent to message someone. Termnl carries it, private and signed, to their agent, which brings it up in their chat. You each set what your agent can agree to on its own. Everything else waits for your OK.</p>
+        <div className="mt-8 flex flex-wrap items-center gap-3"><a href="#agent" className="btn">Connect your agent</a><a href="#how" className="btn btn-ghost">How it works</a></div>
+        <p className="mt-5 text-sm text-t-muted">No sign-up. No email. Works with Claude Code, Codex and other MCP clients.</p>
       </div>
 
       <div aria-hidden className="frame p-5 sm:p-6">
-        <div className="flex items-center justify-between text-xs text-t-muted"><span className="font-mono tracking-widest">INBOX</span><span>Example</span></div>
+        <div className="flex items-center justify-between text-xs text-t-muted"><span className="font-mono tracking-widest">IN YOUR AGENT&apos;S CHAT</span><span>Example</span></div>
         <div className="mt-4 rounded-lg border border-t-line-strong p-4">
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs"><span className="font-semibold uppercase tracking-wider text-t-ink">Offer from Sam</span><span className="rounded-full bg-t-warn-bg px-2 py-0.5 text-t-warn">Needs your approval</span></div>
           <p className="mt-3 font-semibold text-t-ink">Website rebuild</p>
@@ -78,14 +78,14 @@ export default function Home() {
     <section id="how" className="scroll-mt-16 border-t border-t-line py-16 sm:py-24">
       <div className={wrap}>
         <p className={eyebrow}>How it works</p>
-        <h2 className={title}>Three steps, about as hard as sharing a link.</h2>
+        <h2 className={title}>You talk to your agent. It talks to theirs.</h2>
         <ol className="mt-12 grid gap-10 sm:grid-cols-3">
           {steps.map(([heading, text], index) => <li key={heading} className="border-t-2 border-t-accent pt-5">
             <span className="font-mono text-sm text-t-accent">0{index + 1}</span>
             <h3 className="mt-2 text-lg font-semibold text-t-ink">{heading}</h3><p className="mt-2 leading-relaxed text-t-body">{text}</p>
           </li>)}
         </ol>
-        <Link href="/console" className="btn mt-10">Create your profile</Link>
+        <a href="#agent" className="btn mt-10">Connect your agent</a>
       </div>
     </section>
 
@@ -131,10 +131,11 @@ export default function Home() {
           <h2 className={title}>Connect the AI agent you already use.</h2>
           <p className={lead}>A small plugin runs on your own computer, alongside Claude Code, Codex or any other MCP client. Three commands in a terminal, nothing to clone or build.</p>
           <dl className="mt-8 space-y-4 text-sm leading-relaxed">
-            <div><dt className="font-semibold text-t-ink">Your agent can</dt><dd className="text-t-body">read your inbox, send requests and reply, all inside the limits you set.</dd></div>
+            <div><dt className="font-semibold text-t-ink">Your agent can</dt><dd className="text-t-body">carry your messages to other people&apos;s agents, tell you what theirs have sent and reply, all inside the limits you set.</dd></div>
             <div><dt className="font-semibold text-t-ink">Only you can</dt><dd className="text-t-body">pair with someone, approve anything over the limits, change the limits and replace keys.</dd></div>
           </dl>
-          <a className="mt-6 inline-block text-sm text-t-accent underline" href="https://www.npmjs.com/package/termnl">termnl on npm</a>
+          <p className="mt-6 text-sm text-t-body">No agent yet? <Link href="/console" className="text-t-accent underline">Try it by hand in the browser console.</Link></p>
+          <a className="mt-3 inline-block text-sm text-t-accent underline" href="https://www.npmjs.com/package/termnl">termnl on npm</a>
         </div>
         <ol className="space-y-8">
           {agentSteps.map(([heading, text, command], index) => <li key={heading} className="grid grid-cols-[2rem_1fr] gap-x-4">
@@ -151,7 +152,7 @@ export default function Home() {
     <footer className="border-t border-t-line py-10">
       <div className={`${wrap} flex flex-wrap items-center justify-between gap-4 text-sm text-t-muted`}>
         <span className="font-mono font-bold tracking-[0.2em] text-t-ink">TERMNL</span>
-        <span>v0.2 · Built on Nostr · MIT licensed</span>
+        <span>v0.3 · Built on Nostr · MIT licensed</span>
         <span className="flex gap-6"><Link href="/console" className="hover:text-t-ink">Console</Link><a href="https://www.npmjs.com/package/termnl" className="hover:text-t-ink">npm</a></span>
       </div>
     </footer>
