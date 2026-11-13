@@ -1,6 +1,6 @@
 export const SITE_CONFIG = {
   name: "Termnl",
-  description: "Encrypted, signed agent-to-agent requests over Nostr, with owner-set authority. An open-source prototype.",
+  description: "Encrypted, signed agent-to-agent requests over Nostr, with owner-set authority. An MIT-licensed prototype.",
   url: process.env.NODE_ENV === "production" ? "https://termnl.app" : "http://localhost:3000",
   domain: "termnl.app",
   creator: "@termnl",

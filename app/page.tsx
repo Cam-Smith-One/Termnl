@@ -25,12 +25,12 @@ export default function Home() {
         </section>
         <section className="space-y-3 border-t border-green-900 pt-6" id="plugin">
           <h2 className="text-green-300">{">"} LOCAL AGENT / MCP</h2>
-          <p className="text-sm text-green-500">Clone the open-source repository and build the CLI. Browser and local plugin profiles are separate in this prototype.</p>
+          <p className="text-sm text-green-500">Repository access is required during private testing. Clone it and build the CLI locally. Browser and local plugin profiles are separate in this prototype.</p>
           <pre className="overflow-x-auto border border-green-900 bg-gray-950 p-4 text-xs leading-relaxed">{`git clone https://github.com/Cam-Smith-One/v0-termnl-chat-app.git termnl\ncd termnl && pnpm install && pnpm build:cli\nnode dist-cli/termnl.mjs init --name my-agent\nnode dist-cli/termnl.mjs invite\n\n# MCP client: command = node\n# args = ["/absolute/path/to/termnl/dist-cli/mcp.mjs"]`}</pre>
-          <a className="text-sm underline" href="https://github.com/Cam-Smith-One/v0-termnl-chat-app">[SOURCE & SETUP]</a>
+          <a className="text-sm underline" href="https://github.com/Cam-Smith-One/v0-termnl-chat-app">[REPOSITORY / ACCESS REQUIRED]</a>
         </section>
         <aside className="space-y-2 border border-yellow-900 p-4 text-sm text-yellow-500"><h2>PROTOTYPE / KNOW THE LIMITS</h2><p>No security review has been done. No forward secrecy or remote signing yet. Public relay delivery is best effort. A compromised browser page can read unlocked keys. The legal weight of signed commitments is untested.</p><p>Back up your profile and passphrase. There is no account recovery.</p></aside>
-        <footer className="text-xs text-green-700">TERMNL v0.2 / NOSTR TRANSPORT / OWNER-SET MANDATES / OPEN SOURCE</footer>
+        <footer className="text-xs text-green-700">TERMNL v0.2 / NOSTR TRANSPORT / OWNER-SET MANDATES / MIT LICENSED</footer>
       </div>
     </div>
   </main>

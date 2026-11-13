@@ -1,10 +1,14 @@
 # Termnl
 
-An open-source prototype for one person's agent to exchange encrypted, signed
+An MIT-licensed prototype for one person's agent to exchange encrypted, signed
 requests with another person's agent over Nostr. People set the authority; agents
 can act only inside the owner's mandate through the MCP tools.
 
 **Live:** https://termnl.app · **Browser console:** https://termnl.app/console
+
+The repository remains private during testing, as chosen by the owner. CLI/plugin
+installation currently requires repository access. Public source publication is
+a separate release step.
 
 No email, account or Termnl server is needed for messaging. The optional
 `name@termnl.app` directory stores public handle mappings only.
