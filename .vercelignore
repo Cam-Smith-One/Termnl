@@ -1,0 +1,10 @@
+.git
+.vercel
+.env*
+node_modules
+.next
+outputs
+tests
+
+handoff
+dist-cli

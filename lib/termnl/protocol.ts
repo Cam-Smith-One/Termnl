@@ -1,0 +1,152 @@
+import { z } from "zod";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "nostr-tools/utils";
+
+/**
+ * Event kinds used by termnl. These are provisional numbers chosen for the
+ * prototype and are NOT registered Nostr kinds. Only gift wraps (1059) are ever
+ * published to relays; everything below travels inside the encrypted payload.
+ */
+export const KIND = {
+  GIFT_WRAP: 1059,
+  SEAL: 13,
+  ENVELOPE: 4270, // rumor carrying an termnl envelope
+  AGENT_CERT: 4271, // identity key certifies an agent key
+  COMMITMENT: 4272, // responder signs agreed terms
+  COSIGN: 4273, // requester countersigns a commitment
+} as const;
+
+export const MAX_WRAP_BYTES = 64 * 1024;
+export const INVITE_PREFIX = "termnl1:";
+
+const hex64 = z.string().regex(/^[0-9a-f]{64}$/);
+const nostrEvent = z.object({
+  id: hex64,
+  pubkey: hex64,
+  created_at: z.number().int(),
+  kind: z.number().int(),
+  tags: z.array(z.array(z.string())),
+  content: z.string(),
+  sig: z.string().regex(/^[0-9a-f]{128}$/),
+});
+export type SignedEvent = z.infer<typeof nostrEvent>;
+
+export const relayList = z.array(z.string().max(200).refine((value) => {
+  try {
+    const url = new URL(value)
+    return !url.username && !url.password && !url.hash && (url.protocol === "wss:" ||
+      (url.protocol === "ws:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)))
+  } catch { return false }
+}, "Use wss:// relays (ws:// is allowed only on localhost)")).min(1).max(8);
+export const DEFAULT_RELAYS = ["wss://relay.primal.net"];
+
+export const requestBody = z.object({
+  kind: z.enum(["request", "offer", "inform"]),
+  subject: z.string().min(1).max(200),
+  details: z.string().max(4000).optional(),
+  value: z
+    .object({ amount: z.number().nonnegative().finite(), currency: z.string().length(3) })
+    .optional(),
+  due: z.string().max(40).optional(),
+});
+export type RequestBody = z.infer<typeof requestBody>;
+
+const pairingBody = z.object({
+  identity: hex64,
+  cert: nostrEvent,
+  relays: relayList,
+  name: z.string().max(80).optional(),
+});
+
+export const envelope = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("knock"), body: pairingBody.extend({ code: z.string().min(16).max(64) }) }),
+  z.object({ type: z.literal("knock_accept"), body: pairingBody }),
+  z.object({ type: z.literal("request"), body: requestBody }),
+  z.object({
+    type: z.literal("response"),
+    body: z.object({
+      request_id: z.string().uuid(),
+      decision: z.enum(["accept", "decline", "counter"]),
+      note: z.string().max(2000).optional(),
+      commitment: nostrEvent.optional(),
+    }),
+  }),
+  z.object({ type: z.literal("cosign"), body: z.object({ request_id: z.string().uuid(), cosign: nostrEvent }) }),
+  z.object({ type: z.literal("cert_update"), body: z.object({ cert: nostrEvent }) }),
+]).and(
+  z.object({
+    v: z.literal(1),
+    id: z.string().uuid(),
+    sent_at: z.number().int(),
+    expires_at: z.number().int().optional(),
+  }),
+);
+export type Envelope = z.infer<typeof envelope>;
+
+export const invite = pairingBody.extend({ agent: hex64, code: z.string().min(16).max(64) });
+export type Invite = z.infer<typeof invite>;
+
+export const mandate = z.object({
+  /** Inbound items the agent may accept without the owner. */
+  autoAccept: z.object({
+    kinds: z.array(z.enum(["request", "offer", "inform"])),
+    maxAmount: z.number().nonnegative(),
+    currency: z.string().length(3),
+  }),
+  /** What the agent may send without the owner. */
+  outbound: z.object({
+    kinds: z.array(z.enum(["request", "offer", "inform"])),
+    maxAmount: z.number().nonnegative(),
+    currency: z.string().length(3),
+  }),
+  maxOpenPerContact: z.number().int().positive(),
+});
+export type Mandate = z.infer<typeof mandate>;
+
+/** Conservative default: the agent can read, inform and decline; anything of value needs the owner. */
+export const DEFAULT_MANDATE: Mandate = {
+  autoAccept: { kinds: ["inform"], maxAmount: 0, currency: "AUD" },
+  outbound: { kinds: ["request", "inform"], maxAmount: 0, currency: "AUD" },
+  maxOpenPerContact: 20,
+};
+
+/** Deterministic JSON so both parties hash and sign identical bytes. */
+export function canonical(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj).filter((k) => obj[k] !== undefined).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${canonical(obj[k])}`).join(",")}}`;
+}
+
+export function sha256hex(text: string): string {
+  return bytesToHex(sha256(new TextEncoder().encode(text)));
+}
+
+export function withinLimit(
+  body: RequestBody,
+  rule: { kinds: string[]; maxAmount: number; currency: string },
+): boolean {
+  if (!rule.kinds.includes(body.kind)) return false;
+  if (!body.value) return true;
+  return body.value.currency === rule.currency && body.value.amount <= rule.maxAmount;
+}
+
+export function encodeInvite(inv: Invite): string {
+  const bytes = new TextEncoder().encode(JSON.stringify(invite.parse(inv)))
+  return INVITE_PREFIX + btoa(String.fromCharCode(...bytes)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/g, "");
+}
+
+export function decodeInvite(text: string): Invite {
+  let t = text.trim();
+  if (/^https?:\/\//.test(t)) {
+    const url = new URL(t)
+    if (url.pathname !== "/pair") throw new Error("Not a Termnl pairing link")
+    t = decodeURIComponent(url.hash.slice(1))
+  }
+  if (t.length > 12000) throw new Error("Invite is too large")
+  if (!t.startsWith(INVITE_PREFIX)) throw new Error("not an termnl invite");
+  const encoded = t.slice(INVITE_PREFIX.length).replace(/-/g,"+").replace(/_/g,"/")
+  const raw = new TextDecoder().decode(Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0)));
+  return invite.parse(JSON.parse(raw));
+}

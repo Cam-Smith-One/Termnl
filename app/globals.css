@@ -1,0 +1,201 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 222.2 47.4% 11.2%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 222.2 84% 4.9%;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Terminal cursor block animation - CONSISTENT GREEN BLINKING */
+@keyframes terminal-cursor-blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  51%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Terminal cursor block styling - CONSISTENT GREEN CURSOR */
+.terminal-cursor-block {
+  animation: terminal-cursor-blink 1s infinite;
+  color: #00ff00 !important;
+  background-color: #00ff00 !important;
+  display: inline-block;
+  width: 8px;
+  height: 14px;
+  line-height: 14px;
+  text-align: center;
+  font-family: "Courier New", monospace;
+  font-size: 14px;
+  font-weight: normal;
+  vertical-align: baseline;
+}
+
+/* Override any conflicting styles */
+span.terminal-cursor-block {
+  color: #00ff00 !important;
+  background-color: #00ff00 !important;
+}
+
+/* Custom scrollbar for terminal */
+.terminal-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.terminal-scroll::-webkit-scrollbar-track {
+  background: #000;
+}
+
+.terminal-scroll::-webkit-scrollbar-thumb {
+  background: #00ff00;
+  border-radius: 4px;
+}
+
+.terminal-scroll::-webkit-scrollbar-thumb:hover {
+  background: #00cc00;
+}
+
+/* Retro CRT effect (optional) */
+.crt-effect {
+  position: relative;
+}
+
+.crt-effect::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(transparent 50%, rgba(0, 255, 0, 0.03) 50%);
+  background-size: 100% 4px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Mobile-specific terminal improvements */
+@media (max-width: 640px) {
+  .terminal-scroll::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  /* Ensure ASCII art doesn't break layout on mobile */
+  pre {
+    white-space: pre;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Better touch targets for mobile */
+  button {
+    min-height: 44px;
+    touch-action: manipulation;
+  }
+
+  input {
+    min-height: 44px;
+  }
+
+  /* Prevent zoom on input focus */
+  input[type="text"],
+  input[type="email"],
+  input[type="password"] {
+    font-size: 16px;
+  }
+}
+
+/* Responsive text sizing */
+@media (max-width: 480px) {
+  .text-responsive {
+    font-size: 12px;
+  }
+}
+
+/* Better mobile scrolling */
+.mobile-scroll {
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: #00ff00 #000;
+}
+
+/* Mobile-friendly ASCII art */
+@media (max-width: 640px) {
+  pre.ascii-art {
+    font-size: 8px;
+    line-height: 1.1;
+    letter-spacing: -0.5px;
+  }
+}
+
+/* Consistent button styling across all pages */
+button {
+  font-family: "Courier New", monospace !important;
+}
+
+/* Ensure consistent terminal styling */
+.terminal-window {
+  background: #000;
+  color: #00ff00;
+  font-family: "Courier New", monospace;
+  border: 1px solid #00ff00;
+}
+
+/* Loading states consistency */
+.loading-cursor {
+  animation: terminal-cursor-blink 1s infinite;
+}
