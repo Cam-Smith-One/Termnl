@@ -7,6 +7,8 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  // Bundling ws breaks its optional native helpers ("unmask is not a function" on any frame over 32 bytes).
+  serverExternalPackages: ['ws'],
   experimental: {
     serverActions: {
       allowedOrigins: ['termnl.app', 'www.termnl.app', 'localhost:3000']
