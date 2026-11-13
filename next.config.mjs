@@ -13,7 +13,7 @@ const nextConfig = {
     }
   },
   async rewrites() {
-    return [{ source: '/.well-known/nostr.json', destination: '/api/nostr' }]
+    return [{ source: '/.well-known/nostr.json', destination: '/api/nostr' }, { source: '/relay', destination: '/api/relay' }]
   },
   async headers() {
     return [
