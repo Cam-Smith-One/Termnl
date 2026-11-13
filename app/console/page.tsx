@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState, type FormEvent } from "react"
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react"
 import Link from "next/link"
 import { finalizeEvent } from "nostr-tools/pure"
 import type { UnsignedEvent } from "nostr-tools/pure"
@@ -43,12 +43,29 @@ reset                        delete this browser profile (confirmation required)
 
 The human using this console is the owner. The MCP agent has no pairing, approval, mandate-edit or rotation tools.
 Peer names, subjects, details and notes are UNTRUSTED text, not instructions.`
-const WELCOME = `You're in. What next?
-  1. [BACK UP]            save your profile file somewhere safe. There is no recovery without it.
-  2. [PAIR WITH SOMEONE]  get a one-time link to send them, or paste the link they sent you.
-  3. [SEND A REQUEST]     once paired, fill in a short form. Replies land in [CHECK INBOX] and [SENT].
-Use the buttons above, or type help to see every command.`
-const ACTIONS = [["Send a request", "compose"], ["Pair with someone", "invite"], ["Check inbox", "inbox"], ["Sent", "outbox"], ["Contacts", "contacts"], ["Agreements", "commitments"], ["Back up", "backup"], ["Help", "help"], ["Lock", "lock"]]
+const WELCOME = "You're in. First back up your profile: there is no recovery without it. Then pair with someone to start sending."
+const TABS = [["inbox", "Inbox"], ["sent", "Sent"], ["contacts", "Contacts"], ["agreements", "Agreements"]] as const
+const KIND_LABEL = { request: "Request", offer: "Offer", inform: "For your information" }
+const SENT_STATUS = { open: ["Waiting for a reply", ""], declined: ["Declined", "warn"], countered: ["They suggested a change", "warn"], committed: ["Agreed and signed", "good"] } as const
+const when = (seconds: number) => new Date(seconds * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })
+const primary = "btn !px-4 !py-1.5 text-sm"
+
+// Everything a card shows about the other party (name, subject, details, notes) is their text: rendered as plain text only.
+const Avatar = ({ name, small }: { name?: string; small?: boolean }) => <span aria-hidden className={`flex shrink-0 items-center justify-center rounded-full bg-t-tint font-semibold text-t-accent ${small ? "h-6 w-6 text-xs" : "h-10 w-10 text-sm"}`}>{(name?.trim()[0] ?? "?").toUpperCase()}</span>
+const Chip = ({ children, tone = "" }: { children: ReactNode; tone?: string }) => <span className={`whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] ${tone === "warn" ? "border-t-warn-line bg-t-warn-bg text-t-warn" : tone === "good" ? "border-t-accent bg-t-tint text-t-accent" : "border-t-line-strong text-t-muted"}`}>{children}</span>
+const Card = ({ name, meta, chips, children }: { name?: string; meta: string; chips?: ReactNode; children?: ReactNode }) => <article className="flex gap-3 rounded-lg border border-t-line bg-t-panel p-4">
+  <Avatar name={name} />
+  <div className="min-w-0 flex-1">
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1"><span className="break-all font-medium text-t-ink">{name ?? "(no name)"}</span><span className="text-xs text-t-muted">{meta}</span><span className="ml-auto flex flex-wrap gap-1">{chips}</span></div>
+    {children}
+  </div>
+</article>
+const Terms = ({ body }: { body: RequestBody }) => <>
+  <p className="mt-1 break-words text-base font-semibold text-t-ink">{body.subject}</p>
+  {body.details && <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-t-body">{body.details}</p>}
+  {(body.value || body.due) && <div className="mt-2 flex flex-wrap gap-2">{body.value && <Chip>{body.value.amount} {body.value.currency}</Chip>}{body.due && <Chip>Due {body.due}</Chip>}</div>}
+</>
+const Empty = ({ children }: { children: ReactNode }) => <div className="rounded-lg border border-dashed border-t-line-strong p-8 text-center text-sm text-t-muted">{children}</div>
 const button = "btn"
 const field = "mt-1 w-full rounded-md border border-t-line-strong bg-t-field p-2 text-base text-t-ink focus:border-t-accent focus:outline-none focus:ring-1 focus:ring-t-accent"
 const KINDS = { request: "Ask them for something", offer: "Offer them something", inform: "Just let them know" }
@@ -84,6 +101,14 @@ export default function ConsolePage() {
   const [draft, setDraft] = useState<typeof EMPTY | null>(null)
   const [pairLink, setPairLink] = useState("")
   const [theirLink, setTheirLink] = useState("")
+  const [tab, setTab] = useState<(typeof TABS)[number][0]>("inbox")
+  const [, setRev] = useState(0) // bumped after every command so the cards re-read the profile
+  const [find, setFind] = useState("")
+  const [showAnswered, setShowAnswered] = useState(false)
+  const [counterFor, setCounterFor] = useState("")
+  const [counterNote, setCounterNote] = useState("")
+  const [logOpen, setLogOpen] = useState(false)
+  const [dismissed, setDismissed] = useState(0)
   const [entries, setEntries] = useState<Entry[]>([{ id: 0, text: "Welcome to Termnl. Everything you do shows up here.", kind: "status" }])
   const session = useRef<Session | null>(null)
   const relays = useRef([...DEFAULT_RELAYS])
@@ -97,7 +122,7 @@ export default function ConsolePage() {
   const lock = () => { session.current?.mail.close(); session.current?.store.lock(); session.current = null; setActive(""); setPassword(""); setDraft(null); setPairLink("") }
   const compose = (to = "") => {
     const first = session.current?.mail.contacts()[0]
-    if (!first) return write("Pair with someone first: use Invite someone and send them the link.", "status")
+    if (!first) return write("Pair with someone first: use Pair with someone and send them the link.", "status")
     setPairLink(""); setDraft({ ...EMPTY, to: to || npubEncode(first.identity) })
   }
   const run = (command: string) => { if (command.startsWith("compose")) compose(command.split(" ")[1]); else if (/[ "]$/.test(command)) { setInput(command); commandInput.current?.focus() } else void execute(command) }
@@ -123,7 +148,7 @@ export default function ConsolePage() {
     const timer = setInterval(() => { if (session.current && !processing.current) void runRef.current?.("sync", true) }, 6000)
     return () => clearInterval(timer)
   }, [pairLink])
-  useEffect(() => { outputEnd.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }) }, [entries])
+  useEffect(() => { if (logOpen) outputEnd.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }) }, [entries, logOpen])
 
   const execute = async (line: string, auto = false) => {
     if (!line.trim() || processing.current) return
@@ -151,6 +176,7 @@ export default function ConsolePage() {
         session.current = { mail, store }; setActive(name); setLockedName(name); setProfiles(BrowserStore.names()); setNewName(""); setAdding(false)
         write(`Profile "${name}" is ${cmd === "init" ? "ready" : "unlocked"}.\nYour ID: ${mail.whoami().identity}`)
         if (cmd === "init") write(WELCOME, "status")
+        setTimeout(() => void runRef.current?.("sync", true), 0)
         return
       }
       if (cmd === "relays" && !session.current) {
@@ -171,7 +197,6 @@ export default function ConsolePage() {
       const { args, flags } = options(commandWords(line).slice(1))
       // Names, subjects, details and notes come from the other party: always written with kind "peer".
       const who = (identity: string) => `"${mail.contacts().find(contact => contact.identity === identity)?.name ?? "(no name)"}"`
-      const when = (seconds: number) => new Date(seconds * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })
       const terms = (body: RequestBody) => [`Subject: ${body.subject}`, body.details && `Details: ${body.details}`, body.value && `Value: ${body.value.amount} ${body.value.currency}`, body.due && `Due: ${body.due}`].filter(Boolean).join("\n")
       const sync = async () => {
         const confirmed = () => mail.contacts().filter(contact => !contact.pending)
@@ -199,7 +224,7 @@ export default function ConsolePage() {
           write(contact.pending ? `Pairing started with "${contact.name ?? "(no name)"}". That name is what they chose; it is not verified.\nTheir ID: ${npubEncode(contact.identity)}\nIt is confirmed once their console sees it, usually within seconds if they have it open. You can send after that.` : `Paired with "${contact.name ?? "(no name)"}".`, "peer"); break
         }
         case "contacts": {
-          if (!mail.contacts().length) { write("No contacts yet. Use [INVITE SOMEONE] to get a pairing link.", "status"); break }
+          if (!mail.contacts().length) { write("No contacts yet. Use Pair with someone to get a pairing link.", "status"); break }
           for (const contact of mail.contacts()) write(`${who(contact.identity)} · ${contact.pending ? "waiting for them to confirm" : `paired ${when(contact.paired_at)}`}\nThe name is what they chose; it is not verified.\nID: ${npubEncode(contact.identity)}`, "peer", { actions: [["send a request", `compose ${npubEncode(contact.identity)}`]] })
           break
         }
@@ -214,7 +239,7 @@ export default function ConsolePage() {
         }
         case "outbox": {
           await sync()
-          if (!mail.outbox().length) { write("You haven't sent anything yet. Open [CONTACTS] to send a request.", "status"); break }
+          if (!mail.outbox().length) { write("You haven't sent anything yet. Open Contacts to send one.", "status"); break }
           const status = { open: "waiting for a reply", declined: "declined", countered: "they proposed a change", committed: "agreed and signed by both sides" }
           for (const item of mail.outbox()) write(`${item.body.kind.toUpperCase()} to ${who(item.to)} · ${when(item.sent_at)} · ${status[item.status]}\n${terms(item.body)}${item.note ? `\nTheir note: ${item.note}` : ""}`, "peer")
           break
@@ -222,14 +247,14 @@ export default function ConsolePage() {
         case "approve": { const item = mail.approve(args[0] || ""); write("Approved. Nothing is signed until you accept it.", "status"); showInbox(item); break }
         case "accept": case "decline": case "counter": {
           const item = await mail.respond(args[0] || "", cmd, args.slice(1).join(" ") || undefined)
-          write(`${cmd === "accept" ? "Accepted" : cmd === "decline" ? "Declined" : "Countered"} the ${item.body.kind} from ${who(item.from)}.${cmd === "accept" ? " You signed the terms; see [AGREEMENTS] for their countersignature." : ""}`, "peer"); break
+          write(`${cmd === "accept" ? "Accepted" : cmd === "decline" ? "Declined" : "Countered"} the ${item.body.kind} from ${who(item.from)}.${cmd === "accept" ? " You signed the terms; see Agreements for their countersignature." : ""}`, "peer"); break
         }
         case "send": {
           const [to, kind, subject] = args
           if (!to || !kind || !subject) throw new Error('send <contact> <request|offer|inform> "subject" [--amount n] [--currency AUD]')
           const value = flags.amount !== undefined ? { amount: Number(flags.amount), currency: flags.currency || "AUD" } : undefined
           const item = await mail.sendRequest(to, { kind: kind as "request" | "offer" | "inform", subject, details: flags.details, value, due: flags.due }, { owner: true })
-          setDraft(null); write(`Sent to ${who(item.to)}. Their reply will show under [SENT].`, "peer"); break
+          setDraft(null); write(`Sent to ${who(item.to)}. Their reply will show under Sent.`, "peer"); break
         }
         case "commitments": {
           await sync()
@@ -267,13 +292,21 @@ export default function ConsolePage() {
       write(shown, "error"); if (!session.current) setNotice(shown)
     } finally {
       if (!auto) setInput("")
-      processing.current = false; setBusy(false)
+      processing.current = false; setBusy(false); setRev(rev => rev + 1)
     }
   }
   runRef.current = execute
   const submit = (event: FormEvent) => { event.preventDefault(); void execute(input) }
 
   const creating = adding || !profiles.length
+  const mail = active ? session.current?.mail : undefined
+  const contacts = mail?.contacts() ?? []
+  const nameOf = (identity: string) => contacts.find(contact => contact.identity === identity)?.name
+  const matches = (contact: (typeof contacts)[number]) => !find.trim() || `${contact.name ?? ""} ${npubEncode(contact.identity)}`.toLowerCase().includes(find.trim().toLowerCase())
+  const inboxItems = mail?.inbox().slice().reverse() ?? []
+  const openItems = inboxItems.filter(item => item.status === "open"), answered = inboxItems.filter(item => item.status !== "open")
+  const termsOf = (content: string): RequestBody => { try { return JSON.parse(content).terms } catch { return { kind: "inform", subject: "(unreadable terms)" } } }
+  const last = entries[entries.length - 1]
   const needsPassphrase = /^\s*(rotate|handle\s+claim)\b/.test(input)
   const passphraseField = (label: string, create = false) => <label className="block text-xs text-t-body">{label}
     <TerminalInput aria-label="Profile passphrase" type="password" autoComplete={create ? "new-password" : "current-password"} required minLength={create ? 10 : undefined} value={password} onChange={event => setPassword(event.target.value)} disabled={busy} placeholder={create ? "At least 10 characters" : ""} className="mt-1" /></label>
@@ -307,7 +340,13 @@ export default function ConsolePage() {
           </div>
         </form>}
 
-        {active && <div className="flex flex-wrap gap-2 text-xs">{ACTIONS.map(([label, command]) => <button key={command} disabled={busy} onClick={() => run(command)} className="btn-sm">{label}</button>)}</div>}
+        {active && <div className="flex flex-wrap items-center gap-2">
+          <button disabled={busy} className={primary} onClick={() => compose()}>New message</button>
+          <button disabled={busy} className="btn-sm" onClick={() => run("invite")}>Pair with someone</button>
+          <button disabled={busy} className="btn-sm" onClick={() => void execute("sync")}>{busy ? "Working..." : "Check for new"}</button>
+          <span className="ml-auto flex gap-4 text-xs text-t-muted">{[["Back up", "backup"], ["Help", "help"], ["Lock", "lock"]].map(([label, command]) => <button key={command} disabled={busy} className="underline hover:text-t-ink" onClick={() => { if (command === "help") setLogOpen(true); run(command) }}>{label}</button>)}</span>
+        </div>}
+        {active && last && last.id > dismissed && !last.text.startsWith("> ") && <div role="status" className={`flex items-start gap-3 rounded-md border px-3 py-2 text-sm ${last.kind === "error" ? "border-t-danger text-t-danger" : "border-t-line bg-t-tint text-t-body"}`}><p className="line-clamp-3 min-w-0 flex-1 whitespace-pre-wrap break-words">{last.text}</p><button aria-label="Dismiss" className="text-t-muted hover:text-t-ink" onClick={() => setDismissed(last.id)}>×</button></div>}
 
         {active && pairLink && <div className="space-y-5 rounded-lg border border-t-line-strong p-4 sm:p-6">
           <h2 className="text-lg font-semibold text-t-ink">Pair with someone</h2>
@@ -328,10 +367,13 @@ export default function ConsolePage() {
         </div>}
 
         {active && draft && <form className="space-y-4 rounded-lg border border-t-line-strong p-4 sm:p-6" onSubmit={event => { event.preventDefault(); void execute(`send ${draft.to} ${draft.kind} ${quote(draft.subject)}${draft.details ? ` --details ${quote(draft.details)}` : ""}${draft.amount ? ` --amount ${draft.amount}` : ""}${draft.due ? ` --due ${draft.due}` : ""}`) }}>
-          <h2 className="text-lg font-semibold text-t-ink">Send a request</h2>
+          <h2 className="text-lg font-semibold text-t-ink">New message</h2>
           <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block text-xs text-t-body">TO<select aria-label="Send to" className={field} value={draft.to} onChange={event => setDraft({ ...draft, to: event.target.value })}>{session.current?.mail.contacts().map(contact => <option key={contact.identity} value={npubEncode(contact.identity)}>{contact.name ?? npubEncode(contact.identity).slice(0, 16)}</option>)}</select></label>
-            <label className="block text-xs text-t-body">WHAT IS IT?<select aria-label="Kind of request" className={field} value={draft.kind} onChange={event => setDraft({ ...draft, kind: event.target.value })}>{Object.entries(KINDS).map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}</select></label>
+            <fieldset className="min-w-0 sm:col-span-2"><legend className="text-xs text-t-body">TO</legend>
+              {contacts.length > 8 && <input aria-label="Find a contact" value={find} onChange={event => setFind(event.target.value)} placeholder="Find a contact" className={field} />}
+              <div className="mt-2 flex max-h-40 flex-wrap gap-2 overflow-y-auto">{contacts.filter(matches).map(contact => { const id = npubEncode(contact.identity), on = draft.to === id; return <button type="button" key={id} aria-pressed={on} onClick={() => setDraft({ ...draft, to: id })} className={`flex max-w-full items-center gap-2 rounded-full border py-1 pl-1 pr-3 text-sm ${on ? "border-t-accent bg-t-tint font-medium text-t-ink" : "border-t-line-strong text-t-body hover:border-t-accent"}`}><Avatar small name={contact.name} /><span className="truncate">{contact.name ?? id.slice(0, 16)}</span></button> })}</div>
+            </fieldset>
+            <label className="block text-xs text-t-body sm:col-span-2">WHAT IS IT?<select aria-label="Kind of request" className={field} value={draft.kind} onChange={event => setDraft({ ...draft, kind: event.target.value })}>{Object.entries(KINDS).map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}</select></label>
           </div>
           <label className="block text-xs text-t-body">SUBJECT<TerminalInput aria-label="Subject" required maxLength={200} value={draft.subject} onChange={event => setDraft({ ...draft, subject: event.target.value })} placeholder="e.g. Can you review the draft by Friday?" className="mt-1" /></label>
           <label className="block text-xs text-t-body">DETAILS (optional)<textarea aria-label="Details" maxLength={4000} rows={3} className={field} value={draft.details} onChange={event => setDraft({ ...draft, details: event.target.value })} /></label>
@@ -342,17 +384,63 @@ export default function ConsolePage() {
           <p className="text-xs leading-relaxed text-t-muted">Encrypted before it leaves this browser. Nothing is agreed until they accept and both sides sign.</p>
           <div className="flex flex-wrap items-center gap-4"><button disabled={busy} className={button}>{busy ? "Sending..." : "Send"}</button><button type="button" className="text-xs text-t-muted underline" onClick={() => setDraft(null)}>Cancel</button></div>
         </form>}
-        <div className={`${active ? "h-[48vh] min-h-64" : "max-h-40"} overflow-y-auto rounded-lg border border-green-900 bg-gray-950 p-3 font-mono terminal-scroll`} role="log" aria-label="Terminal output" aria-live="polite">
+        {active && mail && <section className="space-y-3">
+          <div role="tablist" className="flex gap-1 overflow-x-auto border-b border-t-line">{TABS.map(([id, label]) => <button key={id} role="tab" aria-selected={tab === id} onClick={() => setTab(id)} className={`-mb-px flex items-center gap-2 whitespace-nowrap border-b-2 px-3 py-2 text-sm ${tab === id ? "border-t-accent font-semibold text-t-ink" : "border-transparent text-t-muted hover:text-t-ink"}`}>{label}{id === "inbox" && openItems.length > 0 && <span className="rounded-full bg-t-accent px-1.5 text-[11px] font-semibold text-t-accent-ink">{openItems.length}</span>}</button>)}</div>
+
+          {tab === "inbox" && <>
+            {!openItems.length && <Empty>Nothing is waiting for you. New messages arrive here automatically while this page is open.</Empty>}
+            {[...openItems, ...(showAnswered ? answered : [])].map(item => <Card key={item.id} name={nameOf(item.from)} meta={when(item.received_at)} chips={<><Chip>{KIND_LABEL[item.body.kind]}</Chip>{item.status !== "open" && <Chip tone={item.status === "accepted" ? "good" : "warn"}>{item.status === "countered" ? "You suggested a change" : `You ${item.status}`}</Chip>}</>}>
+              <Terms body={item.body} />
+              {item.status === "open" && <>
+                {item.authority === "needs_owner" && <p className="mt-3 rounded-md border border-t-warn-line bg-t-warn-bg px-3 py-2 text-xs text-t-warn">This is outside the limits you set for your agent. Approve it first if you want to accept it.</p>}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {item.authority === "needs_owner"
+                    ? <button disabled={busy} className={primary} onClick={() => void execute(`approve ${item.id}`)}>Approve</button>
+                    : <button disabled={busy} className={primary} onClick={() => void execute(`accept ${item.id}`)}>{item.body.kind === "inform" ? "Acknowledge" : "Accept"}</button>}
+                  <button disabled={busy} className="btn-sm" onClick={() => void execute(`decline ${item.id}`)}>Decline</button>
+                  <button disabled={busy} className="btn-sm" onClick={() => { setCounterFor(counterFor === item.id ? "" : item.id); setCounterNote("") }}>Suggest a change</button>
+                </div>
+                {counterFor === item.id && <form className="mt-3 flex flex-wrap gap-2" onSubmit={event => { event.preventDefault(); void execute(`counter ${item.id} ${quote(counterNote)}`); setCounterFor("") }}>
+                  <input aria-label="What would you change?" required maxLength={500} autoFocus value={counterNote} onChange={event => setCounterNote(event.target.value)} placeholder="What would you change?" className={`${field} mt-0 min-w-0 flex-1`} /><button disabled={busy} className="btn-sm">Send reply</button>
+                </form>}
+              </>}
+            </Card>)}
+            {answered.length > 0 && <button className="text-xs text-t-muted underline" onClick={() => setShowAnswered(!showAnswered)}>{showAnswered ? "Hide" : "Show"} {answered.length} answered</button>}
+          </>}
+
+          {tab === "sent" && (mail.outbox().length ? mail.outbox().slice().reverse().map(item => <Card key={item.id} name={nameOf(item.to)} meta={`Sent ${when(item.sent_at)}`} chips={<><Chip>{KIND_LABEL[item.body.kind]}</Chip><Chip tone={SENT_STATUS[item.status][1]}>{SENT_STATUS[item.status][0]}</Chip></>}>
+            <Terms body={item.body} />
+            {item.note && <p className="mt-3 whitespace-pre-wrap break-words border-l-2 border-t-line-strong pl-3 text-sm text-t-body"><span className="block text-xs text-t-muted">Their note</span>{item.note}</p>}
+          </Card>) : <Empty>You haven&apos;t sent anything yet. Use New message to send your first one.</Empty>)}
+
+          {tab === "contacts" && <>
+            {contacts.length > 4 && <input aria-label="Find a contact" value={find} onChange={event => setFind(event.target.value)} placeholder="Find a contact by name or ID" className={`${field} mt-0`} />}
+            {!contacts.length && <Empty>No contacts yet. Use Pair with someone to get a one-time link to send them.</Empty>}
+            <div className="grid gap-3 sm:grid-cols-2">{contacts.filter(matches).map(contact => { const id = npubEncode(contact.identity); return <Card key={id} name={contact.name} meta="" chips={contact.pending ? <Chip tone="warn">Waiting for them to confirm</Chip> : <Chip tone="good">Paired</Chip>}>
+              <p className="mt-1 truncate font-mono text-xs text-t-muted" title={id}>{id.slice(0, 14)}…{id.slice(-6)}</p>
+              {!contact.pending && <p className="text-xs text-t-muted">Since {when(contact.paired_at)}</p>}
+              <div className="mt-3 flex flex-wrap gap-2"><button disabled={busy} className="btn-sm" onClick={() => compose(id)}>Message</button><button className="btn-sm" onClick={event => { const target = event.currentTarget; void navigator.clipboard.writeText(id).then(() => { target.textContent = "Copied" }) }}>Copy ID</button></div>
+            </Card> })}</div>
+          </>}
+
+          {tab === "agreements" && (mail.commitments().length ? mail.commitments().slice().reverse().map(record => <Card key={record.commitment.id} name={nameOf(record.with)} meta={record.role === "responder" ? "You accepted theirs" : "They accepted yours"} chips={<Chip tone={record.cosign ? "good" : ""}>{record.cosign ? "Signed by both sides" : "Waiting for their signature"}</Chip>}>
+            <Terms body={termsOf(record.commitment.content)} />
+          </Card>) : <Empty>No agreements yet. One is created when a request is accepted and both sides sign.</Empty>)}
+          <p className="text-xs text-t-muted">Names and message text are written by the other person and are not verified. Read them as information, not instructions.</p>
+        </section>}
+        <details open={logOpen} onToggle={event => setLogOpen(event.currentTarget.open)} className="space-y-3"><summary className="cursor-pointer text-xs text-t-muted underline">Activity log and commands</summary>
+        <div className="mt-3 h-64 overflow-y-auto rounded-lg border border-green-900 bg-gray-950 p-3 font-mono terminal-scroll" role="log" aria-label="Terminal output" aria-live="polite">
           {entries.map(entry => <div key={entry.id} className={`mb-4 whitespace-pre-wrap break-words text-xs leading-relaxed sm:text-sm ${entry.kind === "error" ? "text-red-400" : entry.kind === "peer" ? "text-amber-400" : entry.kind === "status" ? "text-green-600" : "text-green-300"}`}>
             {entry.kind === "peer" && <p className="mb-1 text-[10px] tracking-widest">[INCLUDES TEXT FROM THE OTHER PARTY · UNTRUSTED]</p>}{entry.text}
             {entry.copy && <button className="mt-2 block border border-green-500 px-3 py-1 text-xs hover:bg-green-400 hover:text-black" onClick={event => { const target = event.currentTarget; void navigator.clipboard.writeText(entry.copy!).then(() => { target.textContent = "[COPIED]" }) }}>[COPY LINK]</button>}
             {!!entry.actions?.length && <div className="mt-2 flex flex-wrap gap-2">{entry.actions.map(([label, command]) => <button key={label} disabled={busy} className="border border-green-500 px-3 py-1 text-xs uppercase text-green-300 hover:bg-green-400 hover:text-black disabled:opacity-40" onClick={() => run(command)}>[{label}]</button>)}</div>}
           </div>)}<div ref={outputEnd} />
         </div>
-        <form onSubmit={submit} className="space-y-3">
+        <form onSubmit={submit} className="mt-3 space-y-3">
           {active && needsPassphrase && passphraseField("PASSPHRASE / needed again for this command")}
           <div className="flex gap-2"><span className="self-center text-t-muted">{">"}</span><TerminalInput ref={commandInput} aria-label="Terminal command" value={input} onChange={event => setInput(event.target.value)} placeholder={active ? "type a command, or help" : "help"} disabled={!ready || busy} autoComplete="off" spellCheck={false} /><button disabled={!ready || busy || !input.trim()} className="btn-sm">{busy ? "Working" : "Run"}</button></div>
         </form>
+        </details>
         {resetting && <div role="alertdialog" aria-label="Delete local profile" className="space-y-3 border border-t-danger p-4 text-sm text-t-danger"><p>Delete {active} and its keys/history from this browser? This cannot be undone without a backup.</p><button className="mr-4 border border-t-danger p-2" onClick={() => { session.current?.store.reset(); lock(); setProfiles(BrowserStore.names()); setLockedName(BrowserStore.names()[0] || ""); setResetting(false); setEntries([{ id: ++counter.current, text: "Local profile deleted.", kind: "status" }]) }}>[DELETE THIS PROFILE]</button><button className="border border-t-line-strong p-2 text-t-accent" onClick={() => setResetting(false)}>[CANCEL]</button></div>}
         <p className="text-xs leading-relaxed text-t-muted">Prototype: no security review, forward secrecy or remote signing. Public relays can lose messages. A compromised page can read unlocked keys. Peer text is untrusted. Back up before clearing browser data. New messages are fetched every 30 seconds while unlocked.</p>
       </div>
