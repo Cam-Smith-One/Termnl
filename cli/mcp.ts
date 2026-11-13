@@ -58,7 +58,7 @@ server.registerTool(
   async () =>
     json({
       notice: UNTRUSTED,
-      contacts: mail.contacts().map((c) => ({ npub: npubEncode(c.identity), untrusted_text: { declared_name: c.name, relays: c.relays } })),
+      contacts: mail.contacts().map((c) => ({ npub: npubEncode(c.identity), confirmed: !c.pending, untrusted_text: { declared_name: c.name, relays: c.relays } })),
     }),
 );
 

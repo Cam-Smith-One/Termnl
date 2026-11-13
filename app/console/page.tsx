@@ -10,7 +10,7 @@ import { TerminalInput } from "@/components/terminal-input"
 import { Termnl, type InboxItem } from "@/lib/termnl/core"
 import { BrowserStore } from "@/lib/termnl/browser-store"
 import { DEFAULT_RELAYS, type RequestBody } from "@/lib/termnl/protocol"
-import { handlePayload, handleTemplate, HANDLE_DIFFICULTY } from "@/lib/termnl/handles"
+import { handlePayload, handleTemplate, handleDifficulty } from "@/lib/termnl/handles"
 import { commandWords, options } from "@/lib/termnl/command"
 import { ThemeToggle } from "@/components/theme-toggle"
 
@@ -57,13 +57,13 @@ const EMPTY = { to: "", kind: "request", subject: "", details: "", amount: "", d
 const quote = (value: string) => `"${value.replace(/[\\"]/g, "\\$&")}"`
 const text = (value: unknown) => typeof value === "string" ? value : JSON.stringify(value, null, 2)
 
-function mine(event: UnsignedEvent): Promise<Omit<UnsignedEvent, never>> {
+function mine(event: UnsignedEvent, difficulty: number): Promise<Omit<UnsignedEvent, never>> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL("./pow.worker.ts", import.meta.url))
-    const timer = setTimeout(() => { worker.terminate(); reject(new Error("Proof of work timed out; try again")) }, 90000)
+    const timer = setTimeout(() => { worker.terminate(); reject(new Error("Proof of work timed out; try again")) }, 300000)
     worker.onmessage = message => { clearTimeout(timer); worker.terminate(); message.data.error ? reject(new Error(message.data.error)) : resolve(message.data.event) }
     worker.onerror = () => { clearTimeout(timer); worker.terminate(); reject(new Error("Proof-of-work worker failed")) }
-    worker.postMessage({ event, difficulty: HANDLE_DIFFICULTY })
+    worker.postMessage({ event, difficulty })
   })
 }
 
@@ -174,9 +174,10 @@ export default function ConsolePage() {
       const when = (seconds: number) => new Date(seconds * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })
       const terms = (body: RequestBody) => [`Subject: ${body.subject}`, body.details && `Details: ${body.details}`, body.value && `Value: ${body.value.amount} ${body.value.currency}`, body.due && `Due: ${body.due}`].filter(Boolean).join("\n")
       const sync = async () => {
-        const known = new Set(mail.contacts().map(contact => contact.identity))
+        const confirmed = () => mail.contacts().filter(contact => !contact.pending)
+        const known = new Set(confirmed().map(contact => contact.identity))
         const result = await mail.sync()
-        for (const contact of mail.contacts().filter(contact => !known.has(contact.identity))) {
+        for (const contact of confirmed().filter(contact => !known.has(contact.identity))) {
           setPairLink("")
           write(`You are now paired with ${who(contact.identity)}. That name is what they chose; it is not verified.`, "peer", { actions: [["send a request", `compose ${npubEncode(contact.identity)}`]] })
         }
@@ -195,14 +196,14 @@ export default function ConsolePage() {
         case "pair": {
           const contact = await mail.acceptInvite(args[0] || "")
           pendingInvite.current = ""; setHasInvite(false); setPairLink(""); setTheirLink("")
-          write(`Paired with "${contact.name ?? "(no name)"}". That name is what they chose; it is not verified.\nTheir ID: ${npubEncode(contact.identity)}\nThey will see you the next time their console syncs.`, "peer"); break
+          write(contact.pending ? `Pairing started with "${contact.name ?? "(no name)"}". That name is what they chose; it is not verified.\nTheir ID: ${npubEncode(contact.identity)}\nIt is confirmed once their console sees it, usually within seconds if they have it open. You can send after that.` : `Paired with "${contact.name ?? "(no name)"}".`, "peer"); break
         }
         case "contacts": {
           if (!mail.contacts().length) { write("No contacts yet. Use [INVITE SOMEONE] to get a pairing link.", "status"); break }
-          for (const contact of mail.contacts()) write(`${who(contact.identity)} · paired ${when(contact.paired_at)}\nThe name is what they chose; it is not verified.\nID: ${npubEncode(contact.identity)}`, "peer", { actions: [["send a request", `compose ${npubEncode(contact.identity)}`]] })
+          for (const contact of mail.contacts()) write(`${who(contact.identity)} · ${contact.pending ? "waiting for them to confirm" : `paired ${when(contact.paired_at)}`}\nThe name is what they chose; it is not verified.\nID: ${npubEncode(contact.identity)}`, "peer", { actions: [["send a request", `compose ${npubEncode(contact.identity)}`]] })
           break
         }
-        case "sync": { const result = await sync(); if (!auto || result.processed || result.dropped) write(`Checked for new messages: ${result.processed} new${result.dropped ? `, ${result.dropped} ignored` : ""}.`, "status"); break }
+        case "sync": { const result = await sync(); if (!auto || result.processed || result.dropped) write(`Checked for new messages: ${result.processed} new${result.dropped ? `, ${result.dropped} ignored` : ""}.${result.capped ? "\nYour relay returned the most this check will fetch. If someone is flooding your address, real messages may be delayed; rotating your agent key gives you a fresh address." : ""}`, "status"); break }
         case "inbox": {
           await sync()
           const all = mail.inbox(), shown = args[0] === "all" ? all : all.filter(item => item.status === "open")
@@ -241,8 +242,8 @@ export default function ConsolePage() {
           if (args[0] !== "claim") throw new Error("handle claim <name> | handle whois <name>")
           const payload = handlePayload.parse({ name: (args[1] || "").split("@")[0], relays: mail.whoami().relays })
           const pubkey = store.read<{ identity: string }>("config.json", null as never).identity
-          write("Mining an 18-bit proof of work in a worker. Your identity key stays locked until signing.", "status")
-          const work = await mine({ ...handleTemplate(payload, `${window.location.origin}/api/handles`), pubkey })
+          write(`Working out a proof of work for this name${payload.name.length <= 5 ? " (short names take longer, up to a few minutes)" : ""}. Your identity key stays locked until signing.`, "status")
+          const work = await mine({ ...handleTemplate(payload, `${window.location.origin}/api/handles`), pubkey }, handleDifficulty(payload.name))
           const event = await store.withIdentity(passphrase, () => { const sk = hexToBytes(store.read<{ sk: string }>("identity.key", null as never).sk); try { return finalizeEvent(work, sk) } finally { sk.fill(0) } })
           const response = await fetch("/api/handles", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, event }) })
           const result = await response.json()

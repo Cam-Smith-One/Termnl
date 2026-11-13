@@ -38,6 +38,8 @@ export interface Contact {
   /** Self-declared by the peer: display only, never trusted. */
   name?: string;
   paired_at: number;
+  /** We accepted their invite but they have not yet proved they hold the key. Nothing is sent until they do. */
+  pending?: boolean;
 }
 
 export interface InboxItem {
@@ -66,6 +68,8 @@ export interface CommitmentRecord {
   role: "requester" | "responder";
   commitment: SignedEvent;
   cosign?: SignedEvent;
+  /** Each side's agent certificate when it signed, so the agreement stays provable after key rotation. */
+  certs?: { mine: SignedEvent; theirs: SignedEvent };
 }
 
 interface Config {
@@ -107,6 +111,8 @@ export class Termnl {
   readonly store: Store;
   private pool = new SimplePool();
   private config: Config;
+  /** Most wraps fetched per relay per sync, so a flood aimed at this key cannot make a check arbitrarily slow. */
+  syncLimit = 500;
   private agent: AgentKey;
   private sk: Uint8Array;
 
@@ -188,6 +194,9 @@ export class Termnl {
     const inv = decodeInvite(text);
     if (inv.identity === this.config.identity) throw new Error("That is your own invite");
     if (!certValid(inv.cert, inv.identity, inv.agent)) throw new Error("Invite has an invalid or expired certificate");
+    // An invite is only a claim: anyone can build one from a certificate they have seen.
+    // The contact stays pending until its agent key actually writes to us.
+    const proven = this.contacts().some((c) => c.identity === inv.identity && c.agent === inv.agent && !c.pending);
     const contact = this.saveContact({
       identity: inv.identity,
       agent: inv.agent,
@@ -195,6 +204,7 @@ export class Termnl {
       relays: inv.relays,
       name: inv.name,
       paired_at: now(),
+      ...(!proven && { pending: true }),
     });
     await this.send(contact, { type: "knock", body: { ...this.pairingBody(), code: inv.code } });
     return contact;
@@ -282,7 +292,12 @@ export class Termnl {
         "This request is outside the agent's mandate. Ask the owner to send it with `termnl send`, or to widen mandate.json.",
       );
     }
-    const contact = this.resolveContact(to);
+    let contact = this.resolveContact(to);
+    if (contact.pending) {
+      await this.sync(); // their confirmation may already be waiting
+      contact = this.resolveContact(to);
+      if (contact.pending) throw new Error("This pairing is not confirmed yet. It completes once they have checked their inbox; then try again.");
+    }
     const id = randomUUID();
     const item: OutboxItem = {
       id,
@@ -330,7 +345,7 @@ export class Termnl {
         this.sk,
       ) as SignedEvent;
       const all = this.commitments();
-      all.push({ request_id: item.id, with: item.from, role: "responder", commitment });
+      all.push({ request_id: item.id, with: item.from, role: "responder", commitment, certs: { mine: this.agent.cert, theirs: contact.cert } });
       this.store.write("commitments.json", all);
     }
     if (decision === "counter" && !note) throw new Error("A counter needs a note explaining the change");
@@ -342,7 +357,7 @@ export class Termnl {
   }
 
   /** Fetch new gift wraps from our relays and process them. */
-  async sync(): Promise<{ processed: number; dropped: number }> {
+  async sync(): Promise<{ processed: number; dropped: number; capped?: true }> {
     const seen = this.store.read<Seen>("seen.json", { wraps: [], envelopes: [], last_sync: 0 });
     // Gift-wrap timestamps are randomised up to two days into the past.
     const since = (seen.last_sync || now() - 5 * DAY) - 3 * DAY;
@@ -352,9 +367,12 @@ export class Termnl {
     const queryOptions = { maxWait: 5000, onauth: async (event: Parameters<typeof finalizeEvent>[0]) => finalizeEvent(event, this.sk) };
     const events = await this.pool.querySync(
       this.config.relays,
-      { kinds: [KIND.GIFT_WRAP], "#p": [this.agentPub], since },
+      // ponytail: one capped page (newest first). Under a sustained flood older real messages can be missed;
+      // the remedy is rotating the agent key, the upgrade path an inbox relay that restricts who may write.
+      { kinds: [KIND.GIFT_WRAP], "#p": [this.agentPub], since, limit: this.syncLimit },
       queryOptions,
     );
+    const capped = events.length >= this.syncLimit;
 
     const opened: { sender: string; env: Envelope }[] = [];
     let dropped = 0;
@@ -391,7 +409,7 @@ export class Termnl {
     seen.envelopes = seen.envelopes.slice(-5000);
     seen.last_sync = started;
     this.store.write("seen.json", seen);
-    return { processed, dropped };
+    return { processed, dropped, ...(capped && { capped }) };
   }
 
   close(): void {
@@ -470,6 +488,8 @@ export class Termnl {
     // Everything else must come from a paired contact whose certificate is still valid.
     const contact = this.contacts().find((c) => c.agent === sender);
     if (!contact || !certValid(contact.cert, contact.identity, contact.agent)) return false;
+    // Any authenticated message from the key proves they hold it: the pairing is now confirmed.
+    if (contact.pending) this.saveContact({ ...contact, pending: undefined });
 
     switch (env.type) {
       case "knock_accept":
@@ -559,7 +579,7 @@ export class Termnl {
       this.sk,
     ) as SignedEvent;
     const all = this.commitments();
-    all.push({ request_id: item.id, with: contact.identity, role: "requester", commitment: c, cosign });
+    all.push({ request_id: item.id, with: contact.identity, role: "requester", commitment: c, cosign, certs: { mine: this.agent.cert, theirs: contact.cert } });
     this.store.write("commitments.json", all);
     item.status = "committed";
     this.store.write("outbox.json", outbox);
@@ -576,6 +596,7 @@ export class Termnl {
       return false;
     }
     rec.cosign = s;
+    if (rec.certs) rec.certs.theirs = contact.cert; // the key that countersigned
     this.store.write("commitments.json", all);
     return true;
   }

@@ -164,7 +164,7 @@ replace private pairing invites or grant message authority.
    `GET /.well-known/nostr.json?name=cam`.
 
 Claims require a fresh kind-27235 identity signature, exact URL/method, a hash
-binding the name/relays, and 18-bit NIP-13 proof of work. Mining runs in a browser
+binding the name/relays, and NIP-13 proof of work (18 bits, 22 for names of five characters or fewer). At most ten new handles are accepted per hour. Mining runs in a browser
 worker, without a secret key. One handle per public key; existing claims cannot
 be replaced by another key. Reserved names are blocked. This modest proof of
 work slows bulk claims; it does not eliminate squatting or abuse.

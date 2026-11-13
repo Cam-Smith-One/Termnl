@@ -4,6 +4,10 @@ import { getPow } from "nostr-tools/nip13"
 import { canonical, sha256hex, relayList } from "./protocol"
 
 export const HANDLE_DIFFICULTY = 18
+/** Short names are the ones worth squatting, so they cost about sixteen times the work. */
+export const handleDifficulty = (name: string) => (name.length <= 5 ? 22 : HANDLE_DIFFICULTY)
+/** Service-wide ceiling on new handles, so nobody can register names in bulk. */
+export const HANDLES_PER_HOUR = 10
 export const reservedHandles = new Set(["admin", "administrator", "root", "termnl", "support", "help", "security", "api", "console", "www", "mail", "postmaster", "abuse", "owner", "system", "nostr"])
 export const handleName = z.string().regex(/^[a-z0-9][a-z0-9_-]{2,19}$/).refine(name => !reservedHandles.has(name), "This handle is reserved")
 export const handlePayload = z.object({ name: handleName, relays: relayList }).strict()
@@ -32,7 +36,7 @@ export function validateHandleClaim(input: unknown, expectedUrl: string, at = Ma
   if (uniqueTag("u")[1] !== expectedUrl || uniqueTag("method")[1] !== "POST") throw new Error("Claim URL or method does not match")
   if (uniqueTag("payload")[1] !== sha256hex(canonical({ name: data.name, relays: data.relays }))) throw new Error("Claim payload was changed")
   const nonce = uniqueTag("nonce")
-  if (!/^\d+$/.test(nonce[1] || "") || Number(nonce[2]) < HANDLE_DIFFICULTY || !Number.isFinite(Number(nonce[2]))) throw new Error("18-bit proof of work required")
-  if (!verifyEvent(data.event) || getPow(data.event.id) < HANDLE_DIFFICULTY) throw new Error("Invalid signature or insufficient proof of work")
+  if (!/^\d+$/.test(nonce[1] || "") || Number(nonce[2]) < handleDifficulty(data.name) || !Number.isFinite(Number(nonce[2]))) throw new Error("proof of work required")
+  if (!verifyEvent(data.event) || getPow(data.event.id) < handleDifficulty(data.name)) throw new Error("Invalid signature or insufficient proof of work")
   return data
 }

@@ -7,7 +7,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { finalizeEvent } from "nostr-tools/pure";
-import { Termnl, MandateError } from "../lib/termnl/core";
+import { Termnl, MandateError, certValid } from "../lib/termnl/core";
 import { KIND, canonical } from "../lib/termnl/protocol";
 import { FileStore } from "../cli/store";
 import { startRelay } from "./relay";
@@ -240,4 +240,42 @@ test("a contact named after another contact's ID cannot shadow it, and strangers
     assert.equal((await p.sync()).dropped, 1);
     assert.equal(p.recentLog(1000).length, before);
   } finally { p.close(); q.close(); shadow.close(); }
+});
+
+test("an accepted invite stays pending, and nothing is sent, until the other side proves it holds the key", async () => {
+  const p = profile("p4"), q = profile("q4");
+  try {
+    await p.acceptInvite(q.createInvite());
+    assert.equal(contactOf(p, q).pending, true);
+    await assert.rejects(p.sendRequest(contactOf(p, q).identity, { kind: "inform", subject: "too early" }), /not confirmed/);
+    assert.equal(p.outbox().length, 0);
+    await q.sync(); // q sees the knock and confirms
+    await p.sendRequest(contactOf(p, q).identity, { kind: "inform", subject: "now fine" }); // picks up the confirmation itself
+    assert.equal(contactOf(p, q).pending, undefined);
+  } finally { p.close(); q.close(); }
+});
+
+test("an agreement keeps both signers' certificates, so it stays provable after a key rotation", async () => {
+  const p = profile("p5"), q = profile("q5");
+  try {
+    await p.acceptInvite(q.createInvite()); await q.sync(); await p.sync();
+    const sent = await p.sendRequest(contactOf(p, q).identity, { kind: "inform", subject: "keep this" });
+    await q.sync(); await q.respond(sent.id, "accept"); await p.sync(); await q.sync();
+    await q.rotateAgentKey(); await p.sync();
+    for (const [m, role] of [[p, "theirs"], [q, "mine"]] as const) {
+      const rec = m.commitments()[0];
+      assert.notEqual(rec.commitment.pubkey, q.agentPub); // signed by the retired key
+      assert.ok(certValid(rec.certs![role], rec.certs![role].pubkey, rec.commitment.pubkey, rec.commitment.created_at));
+    }
+    assert.equal(p.commitments()[0].certs!.theirs.pubkey, contactOf(p, q).identity);
+  } finally { p.close(); q.close(); }
+});
+
+test("one inbox check fetches a bounded number of messages and says when it hit the limit", async () => {
+  const p = profile("p6");
+  try {
+    for (let i = 0; i < 4; i++) await raw(mallory).send({ agent: p.agentPub, relays: [relay.url] }, { type: "request", body: { kind: "inform", subject: `junk ${i}` } });
+    p.syncLimit = 3;
+    assert.deepEqual(await p.sync(), { processed: 0, dropped: 3, capped: true });
+  } finally { p.close(); }
 });

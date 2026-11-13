@@ -9,7 +9,7 @@ import { npubEncode } from "nostr-tools/nip19";
 import { Termnl } from "../lib/termnl/core";
 import { FileStore } from "./store";
 import { DEFAULT_RELAYS } from "../lib/termnl/protocol";
-import { handleTemplate, handlePayload, HANDLE_DIFFICULTY } from "../lib/termnl/handles";
+import { handleTemplate, handlePayload, handleDifficulty } from "../lib/termnl/handles";
 import { minePow } from "nostr-tools/nip13";
 import { finalizeEvent } from "nostr-tools/pure";
 import { hexToBytes } from "nostr-tools/utils";
@@ -111,7 +111,7 @@ async function main(): Promise<void> {
         const payload = handlePayload.parse({ name: (name || "").split("@")[0], relays: mail.whoami().relays });
         const sk = hexToBytes(mail.store.read<{ sk: string }>("identity.key", null as never).sk);
         try {
-          const work = minePow({ ...handleTemplate(payload, "https://termnl.app/api/handles"), pubkey: mail.store.read<{ identity: string }>("config.json", null as never).identity }, HANDLE_DIFFICULTY);
+          const work = minePow({ ...handleTemplate(payload, "https://termnl.app/api/handles"), pubkey: mail.store.read<{ identity: string }>("config.json", null as never).identity }, handleDifficulty(payload.name));
           const response = await fetch("https://termnl.app/api/handles", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...payload, event: finalizeEvent(work, sk) }) });
           if (response.status === 503) throw new Error("Handles are not enabled yet");
           const data = await response.json(); if (!response.ok) throw new Error(data.error || "Claim refused"); return out(data);
@@ -119,10 +119,10 @@ async function main(): Promise<void> {
       }
       case "pair": {
         const c = await mail.acceptInvite(args[0] ?? "");
-        return out(`Paired with ${c.name ?? "(unnamed)"} ${npubEncode(c.identity)}. They will see you after their next sync.`);
+        return out(`Pairing started with ${c.name ?? "(unnamed)"} ${npubEncode(c.identity)}. It is confirmed once they next check their inbox; you can send after that.`);
       }
       case "contacts":
-        return out(mail.contacts().map((c) => ({ name: c.name, npub: npubEncode(c.identity), relays: c.relays })));
+        return out(mail.contacts().map((c) => ({ name: c.name, npub: npubEncode(c.identity), relays: c.relays, ...(c.pending && { status: "waiting for them to confirm" }) })));
       case "sync":
         return out(await mail.sync());
       case "inbox":

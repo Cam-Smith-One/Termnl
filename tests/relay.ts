@@ -7,7 +7,7 @@ interface Ev {
   created_at: number;
   tags: string[][];
 }
-type Filter = { ids?: string[]; kinds?: number[]; since?: number; "#p"?: string[] };
+type Filter = { ids?: string[]; kinds?: number[]; since?: number; limit?: number; "#p"?: string[] };
 
 function matches(ev: Ev, f: Filter): boolean {
   if (f.ids && !f.ids.includes(ev.id)) return false;
@@ -56,8 +56,9 @@ export function startRelay(port: number, requireAuth = false): { url: string; ev
       } else if (msg[0] === "REQ") {
         const [, subId, ...filters] = msg as [string, string, ...Filter[]];
         subs.get(ws)?.set(subId, filters);
-        for (const ev of events) {
-          if (filters.some((f) => matches(ev, f))) ws.send(JSON.stringify(["EVENT", subId, ev]));
+        const limit = Math.min(...filters.map((f) => f.limit ?? Infinity));
+        for (const ev of events.filter((e) => filters.some((f) => matches(e, f))).sort((a, b) => b.created_at - a.created_at).slice(0, limit)) {
+          ws.send(JSON.stringify(["EVENT", subId, ev]));
         }
         ws.send(JSON.stringify(["EOSE", subId]));
       } else if (msg[0] === "CLOSE") {
