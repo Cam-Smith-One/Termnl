@@ -136,7 +136,14 @@ unless the owner explicitly approved that request.
 
 ## Relays and availability
 
-The default is **wss://relay.primal.net**. A synthetic probe on 13 November 2026
+New profiles use two relays: **wss://relay.primal.net** (public) and
+**wss://termnl.app/relay** (run with this site). The Termnl relay carries only encrypted
+gift wraps, lets anyone deliver, and lets only the addressee read: a client must prove it
+holds the key before it can list messages sent to it. It keeps messages for 30 days and
+accepts at most 500 a day per recipient. It answers fetches only; it does not push events
+to open subscriptions. Its storage table is created by `scripts/02-relay.sql`.
+
+For the public relay, a synthetic probe on 13 November 2026
 verified acceptance and read-back of kind 1059 events from fresh keys. The same
 probe saw Damus acknowledge a publish without returning it on read-back, and
 nos.lol time out. These are observations, not availability guarantees.

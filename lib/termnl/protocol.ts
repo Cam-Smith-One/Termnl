@@ -39,7 +39,8 @@ export const relayList = z.array(z.string().max(200).refine((value) => {
       (url.protocol === "ws:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)))
   } catch { return false }
 }, "Use wss:// relays (ws:// is allowed only on localhost)")).min(1).max(8);
-export const DEFAULT_RELAYS = ["wss://relay.primal.net"];
+// A public relay plus our own, so one being down or dropping messages does not stop delivery.
+export const DEFAULT_RELAYS = ["wss://relay.primal.net", "wss://termnl.app/relay"];
 
 export const requestBody = z.object({
   kind: z.enum(["request", "offer", "inform"]),
