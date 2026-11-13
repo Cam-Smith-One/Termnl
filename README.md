@@ -151,6 +151,24 @@ Vercel serves the web app and handle API. It does not host a Nostr relay. Runnin
 a dedicated Termnl relay requires other long-running infrastructure and is not
 part of this release.
 
+## Encrypted attachments
+
+Up to four files of 10 MB each can travel with a request. Each file is encrypted on the
+sender's device with a fresh AES-256-GCM key and the ciphertext is stored on a
+[Blossom](https://github.com/hzrd149/blossom) server, signed for with a throwaway key. The
+hash, key and server address travel inside the encrypted message, so the hash is covered by
+the signed agreement. The recipient checks the hash before decrypting.
+
+```bash
+termnl send sam request "Contract attached" --file ./contract.pdf
+termnl save <request-id>     # decrypts into <profile>/downloads; files are saved, never opened
+```
+
+The agent can save attachments but cannot send files unless the owner sets
+`"agentMaySendFiles": true` in the mandate. The default server is `https://nostr.download`;
+most other public Blossom servers refuse encrypted data. A public server can delete files at
+any time and sees their size, timing and the uploader's IP address.
+
 ## Optional NIP-05 handles
 
 Handles are public aliases for **identity** keys, not agent keys. They do not

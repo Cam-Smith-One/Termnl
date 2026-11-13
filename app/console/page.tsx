@@ -12,6 +12,7 @@ import { BrowserStore } from "@/lib/termnl/browser-store"
 import { DEFAULT_RELAYS, type RequestBody } from "@/lib/termnl/protocol"
 import { handlePayload, handleTemplate, handleDifficulty } from "@/lib/termnl/handles"
 import { commandWords, options } from "@/lib/termnl/command"
+import { download, upload, MAX_FILE_BYTES, type Attachment } from "@/lib/termnl/files"
 import { ThemeToggle } from "@/components/theme-toggle"
 
 type Entry = { id: number; text: string; kind: "local" | "peer" | "error" | "status"; copy?: string; actions?: string[][] }
@@ -64,7 +65,22 @@ const Terms = ({ body }: { body: RequestBody }) => <>
   <p className="mt-1 break-words text-base font-semibold text-t-ink">{body.subject}</p>
   {body.details && <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-t-body">{body.details}</p>}
   {(body.value || body.due) && <div className="mt-2 flex flex-wrap gap-2">{body.value && <Chip>{body.value.amount} {body.value.currency}</Chip>}{body.due && <Chip>Due {body.due}</Chip>}</div>}
+  {!!body.attachments?.length && <div className="mt-2 flex flex-wrap gap-2">{body.attachments.map(file => <FileChip key={file.sha256} file={file} />)}</div>}
 </>
+const size = (bytes: number) => bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`
+// Decrypts in the browser and hands the file to the browser's own download, as a generic file so nothing is rendered or run here.
+function FileChip({ file }: { file: Attachment }) {
+  const [state, setState] = useState("Download")
+  const fetchIt = async () => {
+    setState("Decrypting...")
+    try {
+      const url = URL.createObjectURL(new Blob([await download(file) as BlobPart], { type: "application/octet-stream" }))
+      const link = document.createElement("a"); link.href = url; link.download = file.name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
+      setState("Saved")
+    } catch { setState("Unavailable") }
+  }
+  return <span className="flex max-w-full items-center gap-2 rounded-md border border-t-line-strong px-2 py-1 text-xs text-t-body"><span className="truncate font-medium text-t-ink">{file.name}</span><span className="whitespace-nowrap text-t-muted">{size(file.size)}</span><button type="button" disabled={state !== "Download"} className="whitespace-nowrap text-t-accent underline disabled:no-underline disabled:opacity-60" onClick={() => void fetchIt()}>{state}</button></span>
+}
 const Empty = ({ children }: { children: ReactNode }) => <div className="rounded-lg border border-dashed border-t-line-strong p-8 text-center text-sm text-t-muted">{children}</div>
 const button = "btn"
 const field = "mt-1 w-full rounded-md border border-t-line-strong bg-t-field p-2 text-base text-t-ink focus:border-t-accent focus:outline-none focus:ring-1 focus:ring-t-accent"
@@ -113,6 +129,7 @@ export default function ConsolePage() {
   const session = useRef<Session | null>(null)
   const relays = useRef([...DEFAULT_RELAYS])
   const pendingInvite = useRef("")
+  const draftFiles = useRef<File[]>([])
   const processing = useRef(false)
   const counter = useRef(0)
   const outputEnd = useRef<HTMLDivElement>(null)
@@ -123,7 +140,7 @@ export default function ConsolePage() {
   const compose = (to = "") => {
     const first = session.current?.mail.contacts()[0]
     if (!first) return write("Pair with someone first: use Pair with someone and send them the link.", "status")
-    setPairLink(""); setDraft({ ...EMPTY, to: to || npubEncode(first.identity) })
+    draftFiles.current = []; setPairLink(""); setDraft({ ...EMPTY, to: to || npubEncode(first.identity) })
   }
   const run = (command: string) => { if (command.startsWith("compose")) compose(command.split(" ")[1]); else if (/[ "]$/.test(command)) { setInput(command); commandInput.current?.focus() } else void execute(command) }
 
@@ -253,8 +270,11 @@ export default function ConsolePage() {
           const [to, kind, subject] = args
           if (!to || !kind || !subject) throw new Error('send <contact> <request|offer|inform> "subject" [--amount n] [--currency AUD]')
           const value = flags.amount !== undefined ? { amount: Number(flags.amount), currency: flags.currency || "AUD" } : undefined
-          const item = await mail.sendRequest(to, { kind: kind as "request" | "offer" | "inform", subject, details: flags.details, value, due: flags.due }, { owner: true })
-          setDraft(null); write(`Sent to ${who(item.to)}. Their reply will show under Sent.`, "peer"); break
+          const files = draftFiles.current
+          if (files.length > 4 || files.some(file => !file.size || file.size > MAX_FILE_BYTES)) throw new Error(`Attach up to 4 files of at most ${MAX_FILE_BYTES / 1024 / 1024} MB each`)
+          const attachments = files.length ? await Promise.all(files.map(async file => upload({ name: file.name, type: file.type, bytes: new Uint8Array(await file.arrayBuffer()) }))) : undefined
+          const item = await mail.sendRequest(to, { kind: kind as "request" | "offer" | "inform", subject, details: flags.details, value, due: flags.due, attachments }, { owner: true })
+          draftFiles.current = []; setDraft(null); write(`Sent to ${who(item.to)}. Their reply will show under Sent.`, "peer"); break
         }
         case "commitments": {
           await sync()
@@ -381,7 +401,8 @@ export default function ConsolePage() {
             <label className="block text-xs text-t-body">AMOUNT IN AUD (optional)<TerminalInput aria-label="Amount" type="number" min="0" step="any" value={draft.amount} onChange={event => setDraft({ ...draft, amount: event.target.value })} className="mt-1" /></label>
             <label className="block text-xs text-t-body">DUE DATE (optional)<TerminalInput aria-label="Due date" type="date" value={draft.due} onChange={event => setDraft({ ...draft, due: event.target.value })} className="mt-1" /></label>
           </div>
-          <p className="text-xs leading-relaxed text-t-muted">Encrypted before it leaves this browser. Nothing is agreed until they accept and both sides sign.</p>
+          <label className="block text-xs text-t-body">ATTACH FILES (optional, up to 4, 10 MB each)<input aria-label="Attach files" type="file" multiple className="mt-1 block w-full text-sm text-t-body" onChange={event => { draftFiles.current = [...(event.target.files ?? [])] }} /></label>
+          <p className="text-xs leading-relaxed text-t-muted">Message and files are encrypted before they leave this browser. Nothing is agreed until they accept and both sides sign.</p>
           <div className="flex flex-wrap items-center gap-4"><button disabled={busy} className={button}>{busy ? "Sending..." : "Send"}</button><button type="button" className="text-xs text-t-muted underline" onClick={() => setDraft(null)}>Cancel</button></div>
         </form>}
         {active && mail && <section className="space-y-3">

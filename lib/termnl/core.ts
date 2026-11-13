@@ -292,6 +292,9 @@ export class Termnl {
         "This request is outside the agent's mandate. Ask the owner to send it with `termnl send`, or to widen mandate.json.",
       );
     }
+    if (!opts.owner && body.attachments?.length && !this.mandate().agentMaySendFiles) {
+      throw new MandateError("The agent is not allowed to send files. The owner can send them, or set agentMaySendFiles in the mandate.");
+    }
     let contact = this.resolveContact(to);
     if (contact.pending) {
       await this.sync(); // their confirmation may already be waiting

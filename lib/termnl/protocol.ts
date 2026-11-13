@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "nostr-tools/utils";
+import { attachment } from "./files";
 
 /**
  * Event kinds used by termnl. These are provisional numbers chosen for the
@@ -48,6 +49,8 @@ export const requestBody = z.object({
     .object({ amount: z.number().nonnegative().finite(), currency: z.string().length(3) })
     .optional(),
   due: z.string().max(40).optional(),
+  /** Pointers to encrypted files on Blossom servers. Covered by the request hash and the signed agreement. */
+  attachments: z.array(attachment).max(4).optional(),
 });
 export type RequestBody = z.infer<typeof requestBody>;
 
@@ -100,6 +103,8 @@ export const mandate = z.object({
     currency: z.string().length(3),
   }),
   maxOpenPerContact: z.number().int().positive(),
+  /** Whether the agent may attach local files to what it sends. Off unless the owner turns it on. */
+  agentMaySendFiles: z.boolean().default(false),
 });
 export type Mandate = z.infer<typeof mandate>;
 
@@ -108,6 +113,7 @@ export const DEFAULT_MANDATE: Mandate = {
   autoAccept: { kinds: ["inform"], maxAmount: 0, currency: "AUD" },
   outbound: { kinds: ["request", "inform"], maxAmount: 0, currency: "AUD" },
   maxOpenPerContact: 20,
+  agentMaySendFiles: false,
 };
 
 /** Deterministic JSON so both parties hash and sign identical bytes. */

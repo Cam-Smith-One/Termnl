@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { npubEncode } from "nostr-tools/nip19";
 import { Termnl } from "../lib/termnl/core";
 import { FileStore } from "./store";
+import { attach, save } from "./files";
 import { DEFAULT_RELAYS } from "../lib/termnl/protocol";
 import { handleTemplate, handlePayload, handleDifficulty } from "../lib/termnl/handles";
 import { minePow } from "nostr-tools/nip13";
@@ -25,7 +26,8 @@ const HELP = `termnl <command>
   sync                                                     fetch and process new messages
   inbox [--all]                                            list inbound requests
   approve <request-id> [--accept]                          approve a request outside the mandate
-  send <contact> <request|offer|inform> <subject> [--details ..] [--amount n] [--currency AUD] [--due date]
+  send <contact> <request|offer|inform> <subject> [--details ..] [--amount n] [--currency AUD] [--due date] [--file path ...]
+  save <request-id>                                        download and decrypt a request's attachments (saved, never opened)
   commitments                                              list signed commitments
   accept|decline|counter <request-id> [note]                 respond (accept needs mandate or prior owner approval)
   outbox                                                   show sent requests and replies
@@ -53,6 +55,7 @@ const { values, positionals } = parseArgs({
     amount: { type: "string" },
     currency: { type: "string" },
     due: { type: "string" },
+    file: { type: "string", multiple: true },
     last: { type: "string" },
     help: { type: "boolean" },
     "confirm-profile-reset": { type: "boolean" },
@@ -139,10 +142,15 @@ async function main(): Promise<void> {
         const value = values.amount ? { amount: Number(values.amount), currency: values.currency ?? "AUD" } : undefined;
         const item = await mail.sendRequest(
           to,
-          { kind: kind as "request" | "offer" | "inform", subject, details: values.details, value, due: values.due },
+          { kind: kind as "request" | "offer" | "inform", subject, details: values.details, value, due: values.due, attachments: values.file?.length ? await attach(values.file) : undefined },
           { owner: true },
         );
         return out(`Sent ${item.id}`);
+      }
+      case "save": {
+        const item = [...mail.inbox(), ...mail.outbox()].find((i) => i.id === args[0]);
+        if (!item) throw new Error(`No request ${args[0]}`);
+        return out(await save(mail.store.dir, item.id, item.body.attachments));
       }
       case "commitments":
         await mail.sync();

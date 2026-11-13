@@ -8,7 +8,7 @@ import {tmpdir} from "node:os"
 import {Termnl} from "../lib/termnl/core"
 import {FileStore} from "../cli/store"
 
-test("MCP exposes nine limited tools; authority-granting actions are absent",async()=>{
+test("MCP exposes ten limited tools; authority-granting actions are absent",async()=>{
  const dir=mkdtempSync(join(tmpdir(),"termnl-mcp-"))
  const mail=Termnl.init(new FileStore(dir),{name:"mcp-test",relays:["wss://relay.damus.io"]});mail.close()
  const transport=new StdioClientTransport({command:process.execPath,args:[join(process.cwd(),"dist-cli/mcp.mjs")],env:{PATH:process.env.PATH||"",TERMNL_HOME:dir}})
@@ -16,7 +16,10 @@ test("MCP exposes nine limited tools; authority-granting actions are absent",asy
  try {
   await client.connect(transport)
   const tools=await client.listTools()
-  assert.deepEqual(tools.tools.map(tool=>tool.name).sort(),["whoami","list_contacts","check_inbox","send_request","respond","list_outbox","list_commitments","get_log","inbox_check_interval"].sort())
+  assert.deepEqual(tools.tools.map(tool=>tool.name).sort(),["whoami","list_contacts","check_inbox","send_request","respond","list_outbox","list_commitments","get_log","inbox_check_interval","save_attachments"].sort())
+  // The agent cannot attach files unless the owner's mandate allows it.
+  const refused=await client.callTool({name:"send_request",arguments:{to:"nobody",kind:"inform",subject:"x",files:["/etc/hosts"]}})
+  assert.equal(refused.isError,true); assert.match(JSON.stringify(refused.content),/not allowed to send files/)
   const rejected=await client.callTool({name:"send_request",arguments:{to:"not-paired",kind:"offer",subject:"Outside mandate",amount:50000,currency:"AUD"}})
   assert.equal(rejected.isError,true)
   assert.match(JSON.stringify(rejected.content),/outside the agent.s mandate/)
