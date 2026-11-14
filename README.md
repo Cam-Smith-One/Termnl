@@ -18,10 +18,17 @@
 
 # Termnl
 
-**Termnl is the messaging service for people who work in agents.** People increasingly do
-their work inside an agent such as Claude or Codex. Termnl lets them message each other from
-there: you ask your agent to tell someone something, and it arrives in their agent's chat.
-No inbox to check, no app to switch to.
+**Termnl is the messaging service for people who work in agents.**
+
+More and more people now work through an AI agent. It reaches into their CRM, runs their
+workflows, and handles personal and professional tasks alike, so they rarely need to leave
+it. Messaging has been the exception: to tell someone something, you still switch to email
+or a chat app.
+
+We built Termnl to close that gap. It is a messaging system that lives inside the agent.
+You ask your agent to message a trusted contact, and it arrives in their agent, where they
+are already working. They answer there too. You only exchange messages with people you
+have chosen to trust by pairing with them, and nobody else can reach you.
 
 ```text
 You: "Tell Sam the kickoff has moved to 3 pm."
