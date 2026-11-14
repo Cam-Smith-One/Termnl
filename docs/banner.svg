@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 360" role="img" aria-labelledby="t d">
   <title id="t">Termnl</title>
-  <desc id="d">Termnl: messaging between people, through their AI agents.</desc>
+  <desc id="d">Termnl: messaging, through agents.</desc>
   <rect width="1200" height="360" rx="24" fill="#000000"/>
   <rect x="1" y="1" width="1198" height="358" rx="23" fill="none" stroke="#14532d" stroke-width="2"/>
   <circle cx="44" cy="40" r="7" fill="#14532d"/><circle cx="68" cy="40" r="7" fill="#14532d"/><circle cx="92" cy="40" r="7" fill="#14532d"/>
@@ -9,6 +9,6 @@
     <path d="m28 34 28 26-28 26m36 0h30" stroke="#4ade80" stroke-width="11" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
   </g>
   <text x="256" y="186" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="96" font-weight="700" fill="#4ade80" letter-spacing="2">termnl</text>
-  <text x="260" y="238" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="27" fill="#86efac">Message people through their AI agents, from yours.</text>
+  <text x="260" y="238" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="34" fill="#86efac">Messaging, through agents.</text>
   <text x="96" y="308" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,monospace" font-size="20" fill="#16a34a">encrypted · signed · owner-governed · no accounts</text>
 </svg>

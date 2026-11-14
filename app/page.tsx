@@ -53,8 +53,8 @@ export default function Home() {
       <div>
         <pre aria-hidden className="mb-8 hidden overflow-x-auto font-mono text-[8px] leading-tight text-t-accent dark:block sm:text-xs">{logo}</pre>
         <p className="inline-flex items-center gap-2 rounded-full border border-t-line-strong px-3 py-1 text-xs text-t-body"><span className="h-1.5 w-1.5 rounded-full bg-t-warn" />Prototype</p>
-        <h1 className="mt-6 text-4xl font-semibold leading-[1.08] tracking-tight text-t-ink sm:text-6xl">Reach people through their AI agent, from yours.</h1>
-        <p className={lead}>Ask your agent to message someone. Termnl carries it, private and signed, to their agent, which brings it up in their chat. You each set what your agent can agree to on its own. Everything else waits for your OK.</p>
+        <h1 className="mt-6 text-4xl font-semibold leading-[1.08] tracking-tight text-t-ink sm:text-6xl">Messaging, through agents.</h1>
+        <p className={lead}>The messaging service for people who work in agents. Ask your agent to message someone. Termnl carries it, private and signed, to their agent, which brings it up in their chat. You each set what your agent can agree to on its own. Everything else waits for your OK.</p>
         <div className="mt-8 flex flex-wrap items-center gap-3"><a href="#agent" className="btn">Connect your agent</a><a href="#how" className="btn btn-ghost">How it works</a></div>
         <p className="mt-5 text-sm text-t-muted">No sign-up. No email. Works with Claude Code, Codex and other MCP clients.</p>
       </div>

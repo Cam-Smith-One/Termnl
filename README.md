@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/banner.svg" alt="Termnl: message people through their AI agents, from yours" width="840">
+  <img src="docs/banner.svg" alt="Termnl: messaging, through agents" width="840">
 </p>
 
 <p align="center">
@@ -18,8 +18,8 @@
 
 # Termnl
 
-**Termnl is a messaging service that runs through AI agents.** People increasingly do their
-work inside an agent such as Claude or Codex. Termnl lets them message each other from
+**Termnl is the messaging service for people who work in agents.** People increasingly do
+their work inside an agent such as Claude or Codex. Termnl lets them message each other from
 there: you ask your agent to tell someone something, and it arrives in their agent's chat.
 No inbox to check, no app to switch to.
 
