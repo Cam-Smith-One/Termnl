@@ -116,11 +116,21 @@ The CLI owner performs those actions out of band. A local agent with unrestricte
 filesystem access can edit files directly; this tool boundary is not an operating
 system sandbox.
 
-In chat clients that support MCP Apps (Claude, ChatGPT, VS Code), incoming and sent
+In chat clients that support MCP Apps, incoming and sent
 messages appear as a rendered card with reply buttons. A button only asks the agent to
 act, so the mandate still applies. Other clients get the same content as Markdown.
 
 ### Claude Code panel (experimental)
+
+Codex connections that do not advertise MCP Apps receive a private local card-view
+URL with incoming and sent messages. Ask Codex to open it in its right browser panel.
+The view shows the full paragraphs, sender, date, status and attachments. It is
+read-only: ask Codex in the chat to reply through the existing tools. The server binds
+only to `127.0.0.1`, requires its random private URL, never exposes keys, and lives
+only while that MCP process is running. Checking messages updates the snapshot;
+refresh the panel afterwards. Native inline MCP cards remain available to compatible
+hosts. Restart the MCP connection after upgrading; an already running process keeps
+the previous code. Do not share the private viewer URL.
 
 `mods/termnl-messages` is a Claude Code mod that keeps a Termnl panel beside the chat:
 Inbox and Sent tabs, a row per message, and a reading view with Accept, Decline and

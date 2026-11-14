@@ -41,13 +41,17 @@ button.no{color:var(--danger)}
 button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 button:disabled{opacity:.5;cursor:default}
 .empty{padding:18px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:14px}
+body[data-standalone]{max-width:880px;margin:auto;padding:20px}
+body[data-standalone] .details{max-height:none;overflow:visible}
+.reply-help{color:var(--muted);font-size:13px;margin-bottom:14px}
 </style></head><body>
 <div class="head"><b>&gt;_ termnl</b><span id="title"></span></div>
 <div id="list"><div class="empty">Loading messages…</div></div>
 <script>
 (function(){
+  var standalone = document.body.dataset.standalone === "true";
   var nextId = 1, waiting = {};
-  function post(m){ m.jsonrpc = "2.0"; window.parent.postMessage(m, "*"); }
+  function post(m){ if (standalone) return; m.jsonrpc = "2.0"; window.parent.postMessage(m, "*"); }
   function request(method, params, done){ var id = nextId++; waiting[id] = done || function(){}; post({ id: id, method: method, params: params }); }
   function notify(method, params){ post({ method: method, params: params || {} }); }
   function el(tag, cls, text){ var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = String(text); return n; }
@@ -59,7 +63,7 @@ button:disabled{opacity:.5;cursor:default}
   }
   function size(n){ return n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB"; }
   var KIND = { request: "Request", offer: "Offer", inform: "For your information" };
-  var STATUS = { open: "Waiting for a reply", accepted: "Agreed", declined: "Declined", countered: "They suggested a change" };
+  var STATUS = { open: "Waiting for a reply", accepted: "Agreed", committed: "Agreed and signed by both sides", declined: "Declined", countered: "They suggested a change" };
 
   function say(text, row){
     // Ask the agent to act; the agent's own limits still apply. Only the request id is sent.
@@ -85,7 +89,7 @@ button:disabled{opacity:.5;cursor:default}
     if (u.due) { var d = el("span", "", "Due "); d.appendChild(el("b", "", u.due)); facts.appendChild(d); }
     if (facts.childNodes.length) box.appendChild(facts);
     (u.attachments || []).forEach(function(f){ box.appendChild(el("span", "file", "📎 " + f.name + " · " + size(f.bytes))); });
-    if (sent || item.status !== "open") return box;
+    if (sent || item.status !== "open" || standalone) return box;
     var owner = String(item.authority).indexOf("needs_owner") === 0;
     if (owner) box.appendChild(el("div", "note", "Outside your agent's limits. Only you can approve it, in a terminal: termnl approve " + item.id));
     var acts = el("div", "acts");
@@ -117,6 +121,12 @@ button:disabled{opacity:.5;cursor:default}
     else if (m.id != null) post({ id: m.id, result: {} });
   });
   if (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches) document.documentElement.dataset.theme = "dark";
+  if (standalone) {
+    var help = el("div", "reply-help", "Private local view · Refresh after checking messages in Codex. To reply, ask Codex in the chat.");
+    document.getElementById("list").before(help);
+    render(JSON.parse(document.getElementById("snapshot").textContent));
+    return;
+  }
   new ResizeObserver(function(){ notify("ui/notifications/size-changed", { height: document.documentElement.scrollHeight }); }).observe(document.body);
   request("ui/initialize", { appInfo: { name: "termnl", version: "1" }, appCapabilities: {}, protocolVersion: "2026-01-26" }, function(r){
     theme(r.hostContext);
