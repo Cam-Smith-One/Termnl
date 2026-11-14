@@ -1,5 +1,5 @@
 import type { Store } from "../lib/termnl/store";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -33,6 +33,21 @@ export class FileStore implements Store {
     writeFileSync(tmp, JSON.stringify(value, null, 2), { mode: 0o600 });
     renameSync(tmp, this.path(name));
     chmodSync(this.path(name), 0o600);
+  }
+
+  /** Creating a directory is atomic, so two processes can never both hold the lock. */
+  exclusive(name: string): (() => void) | undefined {
+    const dir = this.path(`${name}.lock`);
+    for (const attempt of [1, 2]) {
+      try {
+        mkdirSync(dir, { mode: 0o700 });
+        return () => { try { rmdirSync(dir); } catch { /* already released */ } };
+      } catch {
+        // A process that died mid-check leaves its lock behind; nothing legitimate holds one this long.
+        try { if (attempt === 1 && Date.now() - statSync(dir).mtimeMs > 120_000) rmdirSync(dir); else return undefined; } catch { return undefined; }
+      }
+    }
+    return undefined;
   }
 
   append(name: string, value: unknown): void {

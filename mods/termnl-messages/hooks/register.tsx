@@ -20,11 +20,13 @@ const sent = atom({ plugin: 'termnl-messages', key: 'sent' } as const, [], { sha
 const view = atom({ plugin: 'termnl-messages', key: 'view' } as const, HOME, { shape: 'view-1' })
 const error = atom({ plugin: 'termnl-messages', key: 'error' } as const, '')
 
+let home = '' // found once per load of the mod, not on every reread
+
 // Reads the profile's files directly: read-only, so it never races the Termnl plugin's writes.
 const load = async ($: EngineInterface) => {
   try {
-    const { stdout } = await $.process.run(['sh', '-c', 'printf %s "${TERMNL_HOME:-$HOME/.termnl}"'])
-    const file = async (name: string) => JSON.parse(await $.fs.read(`${stdout}/${name}`))
+    home ||= (await $.process.run(['sh', '-c', 'printf %s "${TERMNL_HOME:-$HOME/.termnl}"'])).stdout
+    const file = async (name: string) => JSON.parse(await $.fs.read(`${home}/${name}`))
     const contacts = await file('contacts.json')
     const names = new Map<string, string>(contacts.map((c: any) => [c.identity, c.name]))
     // Mirrors recipientTag in the Termnl core: co-recipients arrive as one-way tags, so only
@@ -60,6 +62,12 @@ const load = async ($: EngineInterface) => {
     const all = (list: any[], one: (m: any) => Promise<Message>) => Promise.all(list.map(one))
     const inbox = (await all(await file('inbox.json'), shape('from', 'received_at'))).sort(newest)
     const outbox = (await all(await file('outbox.json').catch(() => []), shape('to', 'sent_at'))).sort(newest)
+    // Tell the owner about anything that arrived since the last look; the first load only sets the baseline.
+    const before = await read($, messages)
+    const fresh = inbox.filter(m => m.status === 'open' && !before.some(b => b.id === m.id))
+    if (before.length > 0) for (const m of fresh.slice(0, 3)) void $.ui.toast(`Termnl · ${m.name}: ${m.subject}`.slice(0, 140))
+    const waiting = inbox.filter(m => m.status === 'open').length
+    void $.ui.status(waiting ? `Termnl: ${waiting} waiting` : undefined)
     await update($, messages, () => inbox)
     await update($, sent, () => outbox)
     await update($, error, () => '')
@@ -68,8 +76,8 @@ const load = async ($: EngineInterface) => {
   }
 }
 
-// ponytail: sync shares the profile with the Termnl plugin and the file store has no lock;
-// every two minutes keeps overlap rare. Add a lock in the CLI if writes ever collide.
+// Only on Refresh or /termnl. Arrivals are fetched by the Termnl plugin, which holds one idle relay
+// subscription and takes the profile's lock; the panel just rereads the local files.
 const sync = async ($: EngineInterface) => {
   await $.process.run(['npx', '-y', 'termnl', 'sync'], { timeoutMs: 60000 }).catch(() => undefined)
   await load($)
@@ -95,7 +103,8 @@ export const register: Register = on => {
     await $.command.register({ name: 'termnl', description: 'Show your Termnl messages in a panel' })
     void $.ui.open({ id: PANE, title: TITLE })
     void load($)
-    $.clock.every(120000, () => void sync($))
+    // A local file read, not a network call: cheap enough to keep the panel current.
+    $.clock.every(30000, () => void load($))
 
     return next(e)
   })

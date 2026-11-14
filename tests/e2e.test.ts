@@ -100,6 +100,25 @@ test("one message to several contacts: separate copies, and co-recipients are sh
   } finally { for (const m of [p, q, r]) m.close(); }
 });
 
+test("watching wakes on arrival without polling, and two processes never check one profile at once", async () => {
+  const p = profile("watch-p"), q = profile("watch-q");
+  try {
+    await q.acceptInvite(p.createInvite()); await p.sync(); await q.sync();
+    const arrived = new Promise<string[]>((resolve) => {
+      const stop = p.watch((news) => { stop(); resolve(news.messages.map((m) => m.body.subject)); }, { fallbackMinutes: 60 });
+    });
+    await new Promise((r) => setTimeout(r, 300)); // let the subscription open
+    await q.sendRequest(contactOf(q, p).identity, { kind: "inform", subject: "wake up" });
+    assert.deepEqual(await arrived, ["wake up"]); // far sooner than the 60 minute fallback
+
+    const release = (p.store as FileStore).exclusive("sync")!;
+    assert.equal((p.store as FileStore).exclusive("sync"), undefined);
+    assert.deepEqual(await p.sync(), { processed: 0, dropped: 0, busy: true });
+    release();
+    assert.equal((await p.sync()).busy, undefined);
+  } finally { for (const m of [p, q]) m.close(); }
+});
+
 test("the agent cannot send or accept anything outside the mandate; the owner can", async () => {
   const offer = { kind: "offer" as const, subject: "Website rebuild", value: { amount: 8400, currency: "AUD" } };
   await assert.rejects(sam.sendRequest("alex", offer), MandateError);

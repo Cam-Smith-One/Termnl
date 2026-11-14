@@ -400,8 +400,56 @@ export class Termnl {
     return item;
   }
 
-  /** Fetch new gift wraps from our relays and process them. */
-  async sync(): Promise<{ processed: number; dropped: number; capped?: true }> {
+  /**
+   * Fetch new gift wraps from our relays and process them. Several processes can share one profile
+   * (two agent sessions, a watcher), so only one checks at a time; the rest report nothing new.
+   */
+  async sync(): Promise<{ processed: number; dropped: number; capped?: true; busy?: true }> {
+    const release = this.store.exclusive?.("sync");
+    if (this.store.exclusive && !release) return { processed: 0, dropped: 0, busy: true };
+    try {
+      return await this.syncNow();
+    } finally {
+      release?.();
+    }
+  }
+
+  /**
+   * Wait for messages without polling: one idle subscription per relay wakes a check when something
+   * arrives. A slow fallback check covers relays that do not push. Returns a function that stops it.
+   */
+  watch(
+    onNew: (news: { messages: InboxItem[]; replies: OutboxItem[] }) => void,
+    opts: { fallbackMinutes?: number } = {},
+  ): () => void {
+    let timer: ReturnType<typeof setTimeout> | undefined, running = false, again = false;
+    const check = async () => {
+      if (running) { again = true; return; }
+      running = true;
+      try {
+        const had = new Set(this.inbox().map((i) => i.id));
+        const was = new Map(this.outbox().map((o) => [o.id, o.status]));
+        await this.sync();
+        const messages = this.inbox().filter((i) => !had.has(i.id));
+        const replies = this.outbox().filter((o) => was.has(o.id) && was.get(o.id) !== o.status);
+        if (messages.length || replies.length) onNew({ messages, replies });
+      } catch { /* offline or a relay is down; the next wake or fallback tries again */ }
+      running = false;
+      if (again) { again = false; wake(); }
+    };
+    // A burst of arrivals becomes one check.
+    const wake = () => { clearTimeout(timer); timer = setTimeout(check, 1500); };
+    // limit 0 asks for nothing stored, only what arrives from now on. No "since": gift-wrap timestamps are randomised into the past.
+    const sub = this.pool.subscribeMany(this.config.relays, { kinds: [KIND.GIFT_WRAP], "#p": [this.agentPub], limit: 0 }, {
+      onevent: wake,
+      onauth: async (event) => finalizeEvent(event, this.sk),
+    });
+    const fallback = setInterval(check, Math.max(5, opts.fallbackMinutes ?? 15) * 60_000);
+    (fallback as { unref?: () => void }).unref?.();
+    return () => { clearTimeout(timer); clearInterval(fallback); sub.close(); };
+  }
+
+  private async syncNow(): Promise<{ processed: number; dropped: number; capped?: true }> {
     const seen = this.store.read<Seen>("seen.json", { wraps: [], envelopes: [], last_sync: 0 });
     // Gift-wrap timestamps are randomised up to two days into the past.
     const since = (seen.last_sync || now() - 5 * DAY) - 3 * DAY;

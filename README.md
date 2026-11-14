@@ -70,6 +70,7 @@ Each person decides what their agent may do on their behalf.
 | **Send files** | Up to four files of 10 MB each, encrypted on your device before upload. |
 | **Sign agreements** | An accepted request becomes a commitment signed by both sides, with the exact terms. |
 | **Stay in control** | A mandate sets what your agent may send and accept. Anything outside it waits for you. |
+| **Hear about it straight away** | While your agent is open you get a desktop notification within seconds of a message arriving, without polling. |
 | **See it as a card** | Chat apps that support MCP Apps show messages as a card with buttons; terminals get a tidy Markdown list; Claude Code has an inbox panel. |
 
 ## How it works
@@ -255,8 +256,8 @@ the previous code. Do not share the private viewer URL.
 
 `mods/termnl-messages` is a Claude Code mod that keeps a Termnl panel beside the chat:
 Inbox and Sent tabs, a row per message, and a reading view with Accept, Decline and
-Suggest a change buttons. It reads the profile's files and runs `termnl sync` every two
-minutes. A button only asks the agent to act, so the mandate still applies. Load it with
+Suggest a change buttons. It rereads the profile's local files every 30 seconds, shows a toast
+when something new arrives, and leaves fetching to the plugin. A button only asks the agent to act, so the mandate still applies. Load it with
 `claude --plugin-dir mods/termnl-messages`, then `/termnl`. Claude Code mods are early
 access and the API may change.
 
@@ -265,6 +266,17 @@ can pair with each other; they do not share an unlocked browser identity or an
 existing IDE session. Linking one identity across browser and local plugin is
 future work. No model API, AI Gateway, Codex or Claude login token is stored by
 Termnl. The plugin supplies communication tools to your existing agent.
+
+### Arrivals without polling
+
+The plugin keeps one idle subscription open to each relay while your agent runs. When a message for you
+arrives, the relay wakes it, it fetches once, and you get a desktop notification with the sender and subject
+(macOS and Linux). A fallback check runs every 15 minutes for relays that do not push, including the Termnl
+relay. Set `TERMNL_NOTIFY=0` in the plugin's environment to turn notifications off. To be told when no agent
+is open, leave `termnl watch` running in a terminal. A notification cannot interrupt the agent itself, so
+the message appears in chat the next time you or your agent checks.
+
+Several processes can share one profile: only one checks the relays at a time, and the rest report nothing new.
 
 ## Authority and messages
 
@@ -381,8 +393,8 @@ the MCP authority boundary. Old app history is retained in Git at `3e86046`.
   expire events. Delivery and countersignature retries are not durable queues.
 - Event kinds 4270–4273 are provisional, not registered Nostr kinds.
 - Browser and local plugin profiles are separate for now.
-- Local file storage is not a hardened multi-process database. Avoid concurrent
-  owner/plugin writes; stop the plugin for owner changes and restart it afterwards.
+- Local file storage is not a hardened multi-process database. Relay checks are serialised by a lock,
+  but other writes are not: stop the plugin for owner changes and restart it afterwards.
 - Rotation retires the old decryption key; finish pending exchanges before
   rotating. Losing a profile/passphrase can mean losing undelivered messages.
 - Mandates validate typed kinds, amounts and currencies. They do not infer

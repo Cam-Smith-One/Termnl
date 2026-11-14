@@ -12,6 +12,7 @@ import type { RequestBody } from "../lib/termnl/protocol";
 import { attach, save } from "./files";
 import { CARD_HTML, CARD_META, CARD_MIME, CARD_URI } from "./card";
 import { CardView } from "./card-view";
+import { describe, notify } from "./notify";
 
 /**
  * The agent's surface. Deliberately absent: pairing, approving and key rotation.
@@ -290,3 +291,13 @@ server.registerTool(
 );
 
 await server.connect(new StdioServerTransport());
+
+// While the agent is open, tell the owner when something arrives: one idle subscription per relay, no polling.
+// The agent itself cannot be interrupted from here, so this is a desktop notification. TERMNL_NOTIFY=0 turns it off.
+if (process.env.TERMNL_NOTIFY !== "0") {
+  const nameOf = (identity: string) => mail.contacts().find((c) => c.identity === identity)?.name ?? "A contact";
+  const stop = mail.watch((news) => { for (const n of describe(news, nameOf)) notify(n.title, n.body); },
+    { fallbackMinutes: mail.store.read("prefs.json", { inboxCheckMinutes: 15 }).inboxCheckMinutes });
+  // Open relay connections would otherwise keep this process alive after the agent has gone.
+  process.stdin.once("close", () => { stop(); mail.close(); process.exit(0); });
+}

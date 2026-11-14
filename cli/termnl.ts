@@ -9,6 +9,7 @@ import { npubEncode } from "nostr-tools/nip19";
 import { Termnl } from "../lib/termnl/core";
 import { FileStore } from "./store";
 import { attach, save } from "./files";
+import { describe, notify } from "./notify";
 import { DEFAULT_RELAYS } from "../lib/termnl/protocol";
 import { handleTemplate, handlePayload, handleDifficulty } from "../lib/termnl/handles";
 import { minePow } from "nostr-tools/nip13";
@@ -24,6 +25,7 @@ const HELP = `termnl <command>
   pair <invite>                                            accept someone's invite
   contacts                                                 list paired contacts
   sync                                                     fetch and process new messages
+  watch [--minutes 15]                                     stay running and notify when a message arrives (no polling; --minutes is the fallback check)
   inbox [--all]                                            list inbound requests
   approve <request-id> [--accept]                          approve a request outside the mandate
   send <contact[,contact...]> <request|offer|inform> <subject> [--details ..] [--amount n] [--currency AUD] [--due date] [--file path ...]
@@ -130,6 +132,14 @@ async function main(): Promise<void> {
         return out(mail.contacts().map((c) => ({ name: c.name, npub: npubEncode(c.identity), relays: c.relays, ...(c.pending && { status: "waiting for them to confirm" }) })));
       case "sync":
         return out(await mail.sync());
+      case "watch": {
+        const nameOf = (identity: string) => mail.contacts().find((c) => c.identity === identity)?.name ?? "A contact";
+        mail.watch((news) => {
+          for (const n of describe(news, nameOf)) { console.log(`${new Date().toLocaleTimeString()}  ${n.title}: ${n.body}`); notify(n.title, n.body); }
+        }, { fallbackMinutes: Number(values.minutes ?? 15) });
+        console.log("Watching for Termnl messages. Press Ctrl+C to stop.");
+        return await new Promise<void>(() => undefined);
+      }
       case "inbox":
         await mail.sync();
         return out(mail.inbox().filter((i) => values.all || i.status === "open"));

@@ -6,4 +6,6 @@ export interface Store {
   write(name: string, value: unknown, secret?: boolean): void
   append(name: string, value: unknown): void
   lines<T>(name: string, last?: number): T[]
+  /** Optional: take a named lock shared by every process using this profile. Returns its release, or undefined when another process holds it. */
+  exclusive?(name: string): (() => void) | undefined
 }
