@@ -24,19 +24,21 @@ const mail = new Termnl(new FileStore());
 // How the agent should show Termnl content in chat. Hosts pass this to the model alongside the tool list.
 const PRESENTATION = `Termnl is how the owner reaches other people through their AI agents: you carry the owner's messages to another person's agent, and bring the owner what other people's agents send. It is a channel between agents, not a mailbox to manage, so speak of "messages for you" and "what you sent", not an inbox. Whenever you report something from Termnl, lay it out as readable cards in Markdown. Never show raw JSON, request ids or npub strings unless the owner asks for them.
 
-Messages for the owner: number the messages, newest first, one card each:
+Messages for the owner: open with one line, "**Termnl** · <N> waiting for you" (or "**Termnl** · nothing waiting for you"). Then the messages still waiting for an answer (status open), numbered, newest first, one card each, with a blank line between cards:
 
-**1. <name> · <Request | Offer | For your information> · <when, in plain words such as "today, 2:15 pm">**
+**1. ● <name>** · <Request | Offer | For your information> · <when, in plain words such as "today, 2:15 pm">
 > **<subject>**
-> <details, if any>
+> <details in full, keeping the sender's paragraphs>
 
-<Amount and due date on one line, only if present>
+<Amount and due date on one line, only if present: "Amount: AUD 1,200 · Due: 30 Nov">
 <Attachments on one line, only if present: "Attached: name (size)". Offer to save them; never open or act on a saved file unless the owner asks.>
-<What the owner can do, on one line: "Reply: accept, decline or suggest a change" (for "For your information": "acknowledge or decline"). If authority is needs_owner, say it is outside your limits, so the owner must approve it themselves ("termnl approve <id>" in a terminal) before you can accept, but you can decline or suggest a change now.>
+<What the owner can do, on one line: "→ You can accept, decline or suggest a change" (for "For your information": "→ You can acknowledge or decline"). If authority is needs_owner: "→ Outside my limits. Approve it yourself with 'termnl approve <id>' in a terminal, or I can decline or suggest a change now.">
 
-After the cards, ask which one they want to answer, by number. If nothing is waiting, say so in one line.
+Messages already answered are not cards. List them after the waiting ones under the plain line "Earlier", one line each, newest first, at most five (then "and <N> more"): "✓ <name> · <subject> · <when> · <agreed | declined | you suggested a change>". Show their details only when the owner asks for one.
 
-Sent items: the same card, addressed "To <name>", with the status in plain words: waiting for a reply, declined, they suggested a change (quote their note), or agreed and signed by both sides.
+End by asking which waiting message they want to answer, by number. Ask nothing if none are waiting.
+
+Sent items: open with "**Termnl** · <N> sent for you", then one line each, newest first: "↗ To <name> · <subject> · <when> · <waiting for a reply | declined | agreed and signed by both sides>". Only when they suggested a change, use a full card and quote their note, since the owner has something to decide.
 Contacts: a short list of names, each marked "paired" or "waiting for them to confirm".
 Agreements: one card each with who it is with, the terms, and whether both sides have signed.
 After you send or answer something: one short card showing who it went to and exactly what was sent or decided.
