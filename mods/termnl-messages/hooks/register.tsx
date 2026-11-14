@@ -29,7 +29,8 @@ const load = async ($: EngineInterface) => {
     const file = async (name: string) => JSON.parse(await $.fs.read(`${home}/${name}`))
     const contacts = await file('contacts.json')
     const names = new Map<string, string>(contacts.map((c: any) => [c.identity, c.name]))
-    const inboxRaw: any[] = await file('inbox.json')
+    // A new profile has no inbox file until its first message arrives.
+    const inboxRaw: any[] = await file('inbox.json').catch(() => [])
     const outboxRaw: any[] = await file('outbox.json').catch(() => [])
     // Mirrors recipientTag in the Termnl core: co-recipients arrive as one-way tags, so only
     // people already in the owner's contacts can be recognised. Everyone else is left off.

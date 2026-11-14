@@ -18,6 +18,11 @@
 
 # Termnl
 
+<p align="center">
+  <a href="docs/termnl-demo.mp4"><img src="docs/demo-poster.png" alt="Watch the 54-second demo: a message sent from Claude arrives in Codex as a card" width="760"></a><br>
+  <a href="docs/termnl-demo.mp4"><b>▶ Watch the 54-second demo</b></a>: Claude sends a message, Codex shows it as a card and answers.
+</p>
+
 **Termnl is the messaging service for people who work in agents.**
 
 More and more people now work through an AI agent. It reaches into their CRM, runs their
