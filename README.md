@@ -1,21 +1,135 @@
+<p align="center">
+  <img src="docs/banner.svg" alt="Termnl: message people through their AI agents, from yours" width="840">
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/termnl"><img alt="npm" src="https://img.shields.io/npm/v/termnl?color=16a34a&label=npm"></a>
+  <img alt="Licence: MIT" src="https://img.shields.io/badge/licence-MIT-16a34a">
+  <img alt="Node 22.18+" src="https://img.shields.io/badge/node-22.18%2B-16a34a">
+  <img alt="Status: prototype" src="https://img.shields.io/badge/status-prototype-eab308">
+</p>
+
+<p align="center">
+  <a href="https://termnl.app">termnl.app</a> ·
+  <a href="https://termnl.app/console">Browser console</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#where-this-is-going">Roadmap</a>
+</p>
+
 # Termnl
 
-An MIT-licensed prototype for reaching other people through their AI agents. You ask
-your agent to message someone; Termnl carries it, encrypted and signed, over Nostr to
-their agent, which brings it up in their chat. People set the authority; agents can act
-only inside the owner's mandate through the MCP tools.
+**Termnl is a messaging service that runs through AI agents.** People increasingly do their
+work inside an agent such as Claude or Codex. Termnl lets them message each other from
+there: you ask your agent to tell someone something, and it arrives in their agent's chat.
+No inbox to check, no app to switch to.
 
-The agent you already use is the main way in (see "Local CLI and agent plugin"). The
-browser console is a way to try the same thing by hand.
+```text
+You: "Tell Sam the kickoff has moved to 3 pm."
+      your agent ── encrypted, signed ──▶ Sam's agent
+Sam: sees it in their own chat, and answers there.
+```
 
-**Live:** https://termnl.app · **Browser console:** https://termnl.app/console
+Messages are end-to-end encrypted and signed, and travel over open [Nostr](https://nostr.com)
+relays, so there is no Termnl account, no email address and no central message server.
+Each person decides what their agent may do on their behalf.
 
-The repository remains private during testing, as chosen by the owner. CLI/plugin
-installation currently requires repository access. Public source publication is
-a separate release step.
+> **Status:** an MIT-licensed prototype. It works end to end, but no security review has
+> been done. See [Known limits](#known-limits). The source repository is private during
+> testing; the CLI and plugin are public on npm.
 
-No email, account or Termnl server is needed for messaging. The optional
-`name@termnl.app` directory stores public handle mappings only.
+## Contents
+
+- [What you can do](#what-you-can-do)
+- [How it works](#how-it-works)
+- [Quick start](#quick-start)
+- [Where this is going](#where-this-is-going)
+- Reference: [browser console](#try-it-by-hand-in-the-browser) ·
+  [CLI and agent plugin](#local-cli-and-agent-plugin) ·
+  [authority and messages](#authority-and-messages) ·
+  [relays](#relays-and-availability) ·
+  [attachments](#encrypted-attachments) ·
+  [handles](#optional-nip-05-handles) ·
+  [development](#development-and-checks) ·
+  [known limits](#known-limits)
+
+## What you can do
+
+| | |
+| --- | --- |
+| **Message from your agent** | Ask in plain words. Your agent sends a request, an offer or a piece of information, and brings back what other people's agents send you. |
+| **Answer in one step** | Accept, decline or suggest a change. Replies, follow-ups and forwards are new messages your agent writes for you. |
+| **Send to several people** | One message to up to 20 contacts. Each gets their own encrypted copy and answers separately. |
+| **Choose who sees whom** | Recipients are hidden from each other unless you show them, and a receiver only ever sees people they have already paired with. |
+| **Send files** | Up to four files of 10 MB each, encrypted on your device before upload. |
+| **Sign agreements** | An accepted request becomes a commitment signed by both sides, with the exact terms. |
+| **Stay in control** | A mandate sets what your agent may send and accept. Anything outside it waits for you. |
+| **See it as a card** | Chat apps that support MCP Apps show messages as a card with buttons; terminals get a tidy Markdown list; Claude Code has an inbox panel. |
+
+## How it works
+
+```mermaid
+sequenceDiagram
+    participant You
+    participant A as Your agent (Termnl plugin)
+    participant R as Nostr relays
+    participant B as Their agent (Termnl plugin)
+    participant Them
+    You->>A: "Tell Sam the kickoff moved to 3 pm"
+    A->>R: gift-wrapped, encrypted message
+    R->>B: only the addressee can read it
+    B->>Them: shows it in their chat
+    Them->>B: "Acknowledge it"
+    B->>R: signed reply
+    R->>A: reply
+    A->>You: "Sam has acknowledged"
+```
+
+1. **Pair once.** You share a one-time invite link with someone; pairing exchanges keys.
+   Nobody can message you without it.
+2. **Just ask.** Your agent uses the Termnl tools to send and to check for messages.
+3. **Relays carry sealed envelopes.** They see only encrypted gift wraps, never the content.
+   What a relay can still observe is listed under [Known limits](#known-limits).
+4. **You hold the authority.** Pairing, approving anything outside the mandate, editing the
+   mandate and rotating keys are done by you, not by the agent.
+
+## Quick start
+
+Requires Node 22.18 or later.
+
+```sh
+npx -y termnl init --name my-agent                                  # create your identity
+claude mcp add --scope user termnl -- npx -y -p termnl termnl-mcp   # or: codex mcp add termnl -- npx -y -p termnl termnl-mcp
+npx -y termnl invite                                                # share the link it prints
+```
+
+Restart your agent, then ask it things like:
+
+- "Check my Termnl messages."
+- "Tell Sam the kickoff has moved to 3 pm."
+- "Send the draft to Sam and Alex, and let them see each other."
+- "Decline the request from Sam and say we're booked that week."
+
+No agent yet? The [browser console](https://termnl.app/console) does the same by hand.
+
+## Where this is going
+
+Termnl today is direct messaging between paired people. The direction is a full messaging
+service for people who work inside agents. Planned, not yet built:
+
+- **Teams and organisations.** A named group everyone's agent belongs to, so one message
+  reaches the team. Members only see and hear from members they have paired with.
+- **Receipts.** Delivered, shown and answered, per recipient, under the same trust rule
+  and with the option to switch them off.
+- **Conversations.** Replies threaded with the message they answer, instead of separate items.
+- **Hosted plugin.** A remote version for chat apps that cannot run a local plugin, without
+  handing over keys (needs remote signing, NIP-46).
+- **Stronger group encryption.** MLS via the Marmot protocol, for forward secrecy and large groups.
+- **One identity everywhere.** The same identity across browser, laptop and phone.
+- **Security review** before any production use.
+
+---
+
+# Reference
 
 ## Try it by hand in the browser
 
@@ -71,7 +185,7 @@ npx -y termnl invite
 To build from source instead (also needs pnpm 10.28.2):
 
 ```sh
-git clone https://github.com/Cam-Smith-One/v0-termnl-chat-app.git termnl && cd termnl
+git clone https://github.com/Cam-Smith-One/Termnl.git termnl && cd termnl
 pnpm install --frozen-lockfile && pnpm build:cli
 node dist-cli/termnl.mjs init --name cam-agent
 node dist-cli/termnl.mjs invite
