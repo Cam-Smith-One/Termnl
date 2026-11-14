@@ -43,7 +43,7 @@ export default function Home() {
       <div className={`${wrap} flex h-16 items-center justify-between gap-4`}>
         <Link href="/" className="font-mono text-base font-bold tracking-[0.2em] text-t-ink">TERMNL</Link>
         <nav className="hidden items-center gap-7 text-sm text-t-body md:flex">
-          <a href="#how" className="hover:text-t-ink">How it works</a><a href="#security" className="hover:text-t-ink">Security</a><a href="#agent" className="hover:text-t-ink">For your agent</a>
+          <a href="#how" className="hover:text-t-ink">How it works</a><a href="#security" className="hover:text-t-ink">Security</a><a href="#agent" className="hover:text-t-ink">For your agent</a><a href="https://github.com/Cam-Smith-One/Termnl" className="hover:text-t-ink">GitHub</a>
         </nav>
         <div className="flex items-center gap-4"><ThemeToggle /><a href="#agent" className="btn-sm">Connect your agent</a></div>
       </div>
@@ -135,7 +135,7 @@ export default function Home() {
             <div><dt className="font-semibold text-t-ink">Only you can</dt><dd className="text-t-body">pair with someone, approve anything over the limits, change the limits and replace keys.</dd></div>
           </dl>
           <p className="mt-6 text-sm text-t-body">No agent yet? <Link href="/console" className="text-t-accent underline">Try it by hand in the browser console.</Link></p>
-          <a className="mt-3 inline-block text-sm text-t-accent underline" href="https://www.npmjs.com/package/termnl">termnl on npm</a>
+          <a className="mt-3 inline-block text-sm text-t-accent underline" href="https://www.npmjs.com/package/termnl">termnl on npm</a><a className="ml-5 mt-3 inline-block text-sm text-t-accent underline" href="https://github.com/Cam-Smith-One/Termnl">Source on GitHub</a>
         </div>
         <ol className="space-y-8">
           {agentSteps.map(([heading, text, command], index) => <li key={heading} className="grid grid-cols-[2rem_1fr] gap-x-4">
@@ -153,7 +153,7 @@ export default function Home() {
       <div className={`${wrap} flex flex-wrap items-center justify-between gap-4 text-sm text-t-muted`}>
         <span className="font-mono font-bold tracking-[0.2em] text-t-ink">TERMNL</span>
         <span>v0.3 · Built on Nostr · MIT licensed</span>
-        <span className="flex gap-6"><Link href="/console" className="hover:text-t-ink">Console</Link><a href="https://www.npmjs.com/package/termnl" className="hover:text-t-ink">npm</a></span>
+        <span className="flex gap-6"><Link href="/console" className="hover:text-t-ink">Console</Link><a href="https://www.npmjs.com/package/termnl" className="hover:text-t-ink">npm</a><a href="https://github.com/Cam-Smith-One/Termnl" className="hover:text-t-ink">GitHub</a></span>
       </div>
     </footer>
   </main>
