@@ -8,6 +8,8 @@ export type Message = {
   status: string
   /** Names of people the viewer has paired with who also got it; empty when none. */
   also: string
+  /** Extra lines for the reading view: what it replies to, the team, and any receipt. */
+  notes: string[]
 }
 
 export type View = { tab: 'inbox' | 'sent'; open: string }

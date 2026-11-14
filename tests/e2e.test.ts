@@ -119,6 +119,84 @@ test("watching wakes on arrival without polling, and two processes never check o
   } finally { for (const m of [p, q]) m.close(); }
 });
 
+test("conversations, receipts, status, scheduled reminders, catch-up and teams", async () => {
+  const p = profile("more-p"), q = profile("more-q"), r = profile("more-r");
+  try {
+    for (const peer of [q, r]) { await peer.acceptInvite(p.createInvite()); await p.sync(); await peer.sync(); }
+    const [qid, rid] = [q, r].map((m) => contactOf(p, m).identity);
+
+    // Receipts and status: q is told it arrived, with p's status, then that it was shown.
+    p.setPrefs({ status: { text: "Heads down until 2" } });
+    const ask = await q.sendRequest(contactOf(q, p).identity, { kind: "inform", subject: "question" });
+    assert.deepEqual(await p.sync(), { processed: 1, dropped: 0 });
+    assert.deepEqual(await q.sync(), { processed: 0, dropped: 0 }); // a receipt is not news
+    let sent = q.outbox().find((o) => o.id === ask.id)!;
+    assert.ok(sent.receipt!.delivered_at); assert.equal(sent.receipt!.note, "Heads down until 2"); assert.equal(sent.receipt!.shown_at, undefined);
+    await p.markShown(); await q.sync();
+    assert.ok(q.outbox().find((o) => o.id === ask.id)!.receipt!.shown_at);
+
+    // Turning receipts off sends nothing back.
+    r.setPrefs({ receipts: false });
+    const quiet = await p.sendRequest(rid, { kind: "inform", subject: "no receipt please" });
+    await r.sync(); await r.markShown(); await p.sync();
+    assert.equal(p.outbox().find((o) => o.id === quiet.id)!.receipt, undefined);
+
+    // A reply points at what it answers, and only at something really exchanged with that contact.
+    const reply = await p.sendRequest(qid, { kind: "inform", subject: "answer" }, { re: ask.id });
+    await q.sync();
+    assert.equal(q.inbox().find((i) => i.id === reply.id)!.re, ask.id);
+    await assert.rejects(p.sendRequest(rid, { kind: "inform", subject: "wrong thread" }, { re: ask.id }), /exchanged with this contact/);
+    assert.deepEqual(p.conversation(qid).map((m) => [m.dir, m.item.body.subject]), [["in", "question"], ["out", "answer"]]);
+
+    // A reminder goes out only if the original is still unanswered when it falls due.
+    assert.throws(() => p.schedule([qid], { kind: "inform", subject: "past" }, 1), /future/);
+    const later = Math.floor(Date.now() / 1000) + 3600;
+    // A reminder can only wait on something this owner sent.
+    assert.throws(() => p.schedule([qid], { kind: "inform", subject: "bad" }, later, { unlessAnswered: ask.id }), /No sent request with that id/);
+    assert.throws(() => p.schedule([qid], { kind: "offer", subject: "outside", value: { amount: 5, currency: "AUD" } }, later), MandateError);
+    assert.equal(p.scheduled().length, 0);
+  } finally { for (const m of [p, q, r]) m.close(); }
+});
+
+test("scheduled messages wait for their time, and teams send to every member under the team name", async () => {
+  const p = profile("team-p"), q = profile("team-q"), r = profile("team-r");
+  try {
+    for (const peer of [q, r]) { await peer.acceptInvite(p.createInvite()); await p.sync(); await peer.sync(); }
+    const [qid, rid] = [q, r].map((m) => contactOf(p, m).identity);
+    const first = await p.sendRequest(qid, { kind: "inform", subject: "original" });
+    const soon = Math.floor(Date.now() / 1000) + 2;
+    p.schedule([qid], { kind: "inform", subject: "reminder" }, soon, { unlessAnswered: first.id, re: first.id });
+    await p.sync();
+    assert.equal(p.scheduled().length, 1); // not yet due
+    await new Promise((res) => setTimeout(res, 2100));
+    await p.sync();
+    assert.equal(p.scheduled().length, 0);
+    assert.equal(p.outbox().find((o) => o.body.subject === "reminder")!.re, first.id);
+
+    // Once answered, a waiting reminder is dropped unsent.
+    await q.sync(); await q.respond(first.id, "accept"); await p.sync();
+    p.schedule([qid], { kind: "inform", subject: "not needed" }, Math.floor(Date.now() / 1000) + 1, { unlessAnswered: first.id });
+    await new Promise((res) => setTimeout(res, 1100));
+    await p.sync();
+    assert.equal(p.scheduled().length, 0);
+    assert.equal(p.outbox().some((o) => o.body.subject === "not needed"), false);
+
+    p.setTeam("Design", [qid, rid]);
+    assert.throws(() => p.setTeam("team-q", [qid]), /contact already has that name/);
+    const team = await p.sendToMany(["design"], { kind: "inform", subject: "to the team" });
+    assert.equal(team.sent.length, 2);
+    await q.sync();
+    const got = q.inbox().find((i) => i.body.subject === "to the team")!;
+    assert.equal(got.group!.name, "Design");
+    assert.deepEqual(q.coRecipients(got), []); // q has not paired with r, so r stays invisible
+
+    const caught = q.catchUp();
+    assert.ok(caught.messages.length >= 2);
+    assert.equal(q.catchUp().messages.length, 0); // the marker moved
+    assert.equal(p.setTeam("Design", []).length, 0);
+  } finally { for (const m of [p, q, r]) m.close(); }
+});
+
 test("the agent cannot send or accept anything outside the mandate; the owner can", async () => {
   const offer = { kind: "offer" as const, subject: "Website rebuild", value: { amount: 8400, currency: "AUD" } };
   await assert.rejects(sam.sendRequest("alex", offer), MandateError);

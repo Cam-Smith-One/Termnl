@@ -70,6 +70,12 @@ Each person decides what their agent may do on their behalf.
 | **Send files** | Up to four files of 10 MB each, encrypted on your device before upload. |
 | **Sign agreements** | An accepted request becomes a commitment signed by both sides, with the exact terms. |
 | **Stay in control** | A mandate sets what your agent may send and accept. Anything outside it waits for you. |
+| **Keep a conversation together** | Replies and follow-ups point at the message they answer, and your agent can recall everything exchanged with one person. |
+| **Know it landed** | Receipts tell you when a message was delivered and when it was shown to the other person. Either side can switch them off. |
+| **Send later, and nudge** | Schedule a message, or a reminder that only goes out if there is still no answer. |
+| **Catch up in a few lines** | Ask what you missed: who wrote, what needs a decision, what was answered. |
+| **Say when you're busy** | Set a status such as "Heads down until 2 pm". Senders see it, and your notifications are held. |
+| **Teams** | Name a set of contacts and message them all at once. Members only ever see people they have paired with themselves. |
 | **Hear about it straight away** | While your agent is open you get a desktop notification within seconds of a message arriving, without polling. |
 | **See it as a card** | Chat apps that support MCP Apps show messages as a card with buttons; terminals get a tidy Markdown list; Claude Code has an inbox panel. |
 
@@ -124,11 +130,9 @@ No agent yet? The [browser console](https://termnl.app/console) does the same by
 Termnl today is direct messaging between paired people. The direction is a full messaging
 service for people who work inside agents. Planned, not yet built:
 
-- **Teams and organisations.** A named group everyone's agent belongs to, so one message
-  reaches the team. Members only see and hear from members they have paired with.
-- **Receipts.** Delivered, shown and answered, per recipient, under the same trust rule
-  and with the option to switch them off.
-- **Conversations.** Replies threaded with the message they answer, instead of separate items.
+- **Shared teams and organisations.** Teams today are your own lists. Next is a team that every member
+  holds, with a way to suggest members to each other, still showing only people you have paired with.
+- **Team receipts at a glance.** A per-member tally for a message sent to a team.
 - **Hosted plugin.** A remote version for chat apps that cannot run a local plugin, without
   handing over keys (needs remote signing, NIP-46).
 - **Stronger group encryption.** MLS via the Marmot protocol, for forward secrecy and large groups.
@@ -230,10 +234,11 @@ profile before starting the client. Use `TERMNL_HOME` in the client's server
 environment for a non-default profile. Restart the plugin after a key rotation
 or relay configuration change.
 
-The ten agent tools are `whoami`, `list_contacts`, `check_inbox`, `send_request`,
-`respond`, `save_attachments`, `list_outbox`, `list_commitments`, `get_log`, and `inbox_check_interval`
-(how often a session-start hook, if you set one up, checks for waiting requests). **Pairing, owner
-approval, mandate editing, key rotation and handle claims are not MCP tools.**
+The sixteen agent tools are `whoami`, `list_contacts`, `check_inbox`, `send_request`, `respond`,
+`save_attachments`, `list_outbox`, `list_commitments`, `get_log`, `inbox_check_interval`, `conversation`,
+`catch_up`, `scheduled`, `set_status`, `teams` and `pairing`. `pairing` is refused unless the owner sets
+`"agentMayPair": true` in the mandate. **Owner approval, mandate editing, key rotation and handle
+claims are not MCP tools.**
 The CLI owner performs those actions out of band. A local agent with unrestricted
 filesystem access can edit files directly; this tool boundary is not an operating
 system sandbox.
@@ -277,6 +282,23 @@ is open, leave `termnl watch` running in a terminal. A notification cannot inter
 the message appears in chat the next time you or your agent checks.
 
 Several processes can share one profile: only one checks the relays at a time, and the rest report nothing new.
+
+### Conversations, receipts, status, scheduling and teams
+
+- **Conversations.** A reply carries the id of the message it answers (`termnl send sam inform "Yes" --re <id>`).
+  The pointer is kept only when it names something really exchanged with that contact.
+- **Receipts.** When a request arrives, the receiving side sends back "delivered"; when its owner is shown it,
+  "shown". `termnl receipts off` stops sending them. A receipt is a courtesy from the other side, not proof,
+  and older clients neither send nor understand them.
+- **Status.** `termnl status "Heads down until 2 pm" --until 2026-11-16T14:00:00+11:00` is sent with delivery
+  receipts and holds desktop notifications. `termnl status clear` removes it.
+- **Scheduling.** `--at <ISO time>` queues a message; the agent can also queue a reminder that is sent only if
+  an earlier request is still unanswered. Scheduled messages go out when a Termnl process (the plugin or
+  `termnl watch`) is running at or after that time, must be inside the mandate, and cannot carry files.
+- **Teams.** `termnl team design sam,alex` names a set of contacts; sending to `design` sends each member their
+  own copy with the team name. A team is local to you: nothing is shared except its name on those messages.
+- **Pairing from chat.** With `"agentMayPair": true` in the mandate, the agent can create an invite or accept
+  one you paste. It is off by default because pairing decides who can reach you.
 
 ## Authority and messages
 

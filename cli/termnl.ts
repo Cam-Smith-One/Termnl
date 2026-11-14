@@ -25,10 +25,14 @@ const HELP = `termnl <command>
   pair <invite>                                            accept someone's invite
   contacts                                                 list paired contacts
   sync                                                     fetch and process new messages
+  status [text] [--until <ISO time>]                       show, set or clear ("status clear") what senders are told with their delivery receipt
+  receipts <on|off>                                        whether senders are told their messages arrived and were shown
+  teams | team <name> [contact,contact...]                 list teams; create or replace one; no members deletes it
+  scheduled | cancel <id>                                  list or cancel messages waiting to be sent later
   watch [--minutes 15]                                     stay running and notify when a message arrives (no polling; --minutes is the fallback check)
   inbox [--all]                                            list inbound requests
   approve <request-id> [--accept]                          approve a request outside the mandate
-  send <contact[,contact...]> <request|offer|inform> <subject> [--details ..] [--amount n] [--currency AUD] [--due date] [--file path ...]
+  send <contact|team[,contact...]> <request|offer|inform> <subject> [--at <ISO time>] [--re <id>] [--details ..] [--amount n] [--currency AUD] [--due date] [--file path ...]
                                                            several contacts each get their own copy; add --show-recipients to let them see each other
   save <request-id>                                        download and decrypt a request's attachments (saved, never opened)
   commitments                                              list signed commitments
@@ -54,6 +58,9 @@ const { values, positionals } = parseArgs({
     days: { type: "string" },
     all: { type: "boolean" },
     "show-recipients": { type: "boolean" },
+    at: { type: "string" },
+    re: { type: "string" },
+    until: { type: "string" },
     accept: { type: "boolean" },
     details: { type: "string" },
     amount: { type: "string" },
@@ -135,14 +142,35 @@ async function main(): Promise<void> {
       case "watch": {
         const nameOf = (identity: string) => mail.contacts().find((c) => c.identity === identity)?.name ?? "A contact";
         mail.watch((news) => {
-          for (const n of describe(news, nameOf)) { console.log(`${new Date().toLocaleTimeString()}  ${n.title}: ${n.body}`); notify(n.title, n.body); }
+          for (const n of describe(news, nameOf)) { console.log(`${new Date().toLocaleTimeString()}  ${n.title}: ${n.body}`); if (!mail.status()) notify(n.title, n.body); }
         }, { fallbackMinutes: Number(values.minutes ?? 15) });
         console.log("Watching for Termnl messages. Press Ctrl+C to stop.");
         return await new Promise<void>(() => undefined);
       }
       case "inbox":
         await mail.sync();
+        await mail.markShown();
         return out(mail.inbox().filter((i) => values.all || i.status === "open"));
+      case "status": {
+        if (args.length) {
+          const text = args.join(" ");
+          mail.setPrefs({ status: text === "clear" ? undefined : { text: text.slice(0, 200), until: values.until ? Math.floor(Date.parse(values.until) / 1000) : undefined } });
+        }
+        return out(mail.status() ?? "No status set");
+      }
+      case "receipts":
+        if (args[0] === "on" || args[0] === "off") mail.setPrefs({ receipts: args[0] === "on" });
+        return out(`Receipts are ${mail.prefs().receipts === false ? "off" : "on"}`);
+      case "teams":
+        return out(mail.teams());
+      case "team": {
+        if (!args[0]) throw new Error("usage: team <name> [contact,contact...]");
+        return out(mail.setTeam(args[0], (args[1] ?? "").split(",").map((t) => t.trim()).filter(Boolean)));
+      }
+      case "scheduled":
+        return out(mail.scheduled());
+      case "cancel":
+        return out(mail.cancelScheduled(args[0] ?? "") ? "Cancelled" : "No scheduled message with that id");
       case "approve": {
         const item = mail.approve(args[0] ?? "");
         if (values.accept) await mail.respond(item.id, "accept", undefined, { owner: true });
@@ -154,12 +182,13 @@ async function main(): Promise<void> {
         const value = values.amount ? { amount: Number(values.amount), currency: values.currency ?? "AUD" } : undefined;
         const body = { kind: kind as "request" | "offer" | "inform", subject, details: values.details, value, due: values.due, attachments: values.file?.length ? await attach(values.file) : undefined };
         const many = to.split(",").map((t) => t.trim()).filter(Boolean);
-        if (many.length > 1) {
-          const r = await mail.sendToMany(many, body, { owner: true, showRecipients: values["show-recipients"] });
-          return out(`Sent to ${r.sent.length} of ${many.length} (${values["show-recipients"] ? "they can see each other" : "recipients hidden from each other"})${r.failed.map((f) => `\nFailed for ${npubEncode(f.to)}: ${f.error}`).join("")}`);
+        if (values.at) {
+          const s = mail.schedule(many, body, Math.floor(Date.parse(values.at) / 1000), { re: values.re, showRecipients: values["show-recipients"] });
+          return out(`Scheduled ${s.id} for ${new Date(s.at * 1000).toLocaleString()}. It goes out when Termnl is next running at or after that time.`);
         }
-        const item = await mail.sendRequest(to, body, { owner: true });
-        return out(`Sent ${item.id}`);
+        const r = await mail.sendToMany(many, body, { owner: true, showRecipients: values["show-recipients"], re: values.re });
+        if (r.sent.length === 1 && !r.failed.length) return out(`Sent ${r.sent[0].id}`);
+        return out(`Sent to ${r.sent.length} of ${r.sent.length + r.failed.length} (${r.sent[0]?.group?.shown ? "they can see each other" : "recipients hidden from each other"})${r.failed.map((f) => `\nFailed for ${npubEncode(f.to)}: ${f.error}`).join("")}`);
       }
       case "save": {
         const item = [...mail.inbox(), ...mail.outbox()].find((i) => i.id === args[0]);

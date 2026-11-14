@@ -15,8 +15,8 @@ const STATUS: Record<string, string> = {
 }
 const HOME: View = { tab: 'inbox', open: '' }
 
-const messages = atom({ plugin: 'termnl-messages', key: 'messages' } as const, [], { shape: 'messages-2' })
-const sent = atom({ plugin: 'termnl-messages', key: 'sent' } as const, [], { shape: 'sent-2' })
+const messages = atom({ plugin: 'termnl-messages', key: 'messages' } as const, [], { shape: 'messages-3' })
+const sent = atom({ plugin: 'termnl-messages', key: 'sent' } as const, [], { shape: 'sent-3' })
 const view = atom({ plugin: 'termnl-messages', key: 'view' } as const, HOME, { shape: 'view-1' })
 const error = atom({ plugin: 'termnl-messages', key: 'error' } as const, '')
 
@@ -29,6 +29,8 @@ const load = async ($: EngineInterface) => {
     const file = async (name: string) => JSON.parse(await $.fs.read(`${home}/${name}`))
     const contacts = await file('contacts.json')
     const names = new Map<string, string>(contacts.map((c: any) => [c.identity, c.name]))
+    const inboxRaw: any[] = await file('inbox.json')
+    const outboxRaw: any[] = await file('outbox.json').catch(() => [])
     // Mirrors recipientTag in the Termnl core: co-recipients arrive as one-way tags, so only
     // people already in the owner's contacts can be recognised. Everyone else is left off.
     const tag = async (group: string, identity: string) => {
@@ -48,6 +50,14 @@ const load = async ($: EngineInterface) => {
 
       return known.join(', ')
     }
+    const subjects = new Map<string, string>([...inboxRaw, ...outboxRaw].map((m: any) => [m.id, String(m.body?.subject ?? '')]))
+    const time = (t: number) => new Date(t * 1000).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })
+    const notes = (m: any, who: 'from' | 'to') => [
+      m.re && subjects.has(m.re) ? `In reply to: ${subjects.get(m.re)}` : '',
+      m.group?.name ? `${who === 'to' ? 'Sent to your team' : 'Sent to their team'}: ${m.group.name}` : '',
+      m.receipt?.shown_at ? `Shown to them ${time(m.receipt.shown_at)}` : m.receipt?.delivered_at ? `Delivered ${time(m.receipt.delivered_at)}` : '',
+      m.receipt?.note ? `Their status: ${m.receipt.note}` : '',
+    ].filter(Boolean)
     const shape = (who: 'from' | 'to', at: 'received_at' | 'sent_at') => async (m: any): Promise<Message> => ({
       id: String(m.id),
       name: names.get(m[who]) ?? 'Unknown contact',
@@ -57,11 +67,12 @@ const load = async ($: EngineInterface) => {
       at: Number(m[at]) * 1000,
       status: String(m.status),
       also: m.group ? await also(m, who) : '',
+      notes: notes(m, who),
     })
     const newest = (a: Message, b: Message) => b.at - a.at
     const all = (list: any[], one: (m: any) => Promise<Message>) => Promise.all(list.map(one))
-    const inbox = (await all(await file('inbox.json'), shape('from', 'received_at'))).sort(newest)
-    const outbox = (await all(await file('outbox.json').catch(() => []), shape('to', 'sent_at'))).sort(newest)
+    const inbox = (await all(inboxRaw, shape('from', 'received_at'))).sort(newest)
+    const outbox = (await all(outboxRaw, shape('to', 'sent_at'))).sort(newest)
     // Tell the owner about anything that arrived since the last look; the first load only sets the baseline.
     const before = await read($, messages)
     const fresh = inbox.filter(m => m.status === 'open' && !before.some(b => b.id === m.id))
@@ -158,6 +169,9 @@ export const register: Register = on => {
             <Text dimColor>{clock(opened.at, true)} · {KIND[opened.kind] ?? opened.kind}</Text>
             <Text dimColor>{STATUS[opened.status] ?? opened.status}</Text>
             {opened.also !== '' && <Text dimColor>Also sent to: {opened.also}</Text>}
+            {opened.notes.map(note => (
+              <Text dimColor>{note}</Text>
+            ))}
           </Box>
           <Box marginTop={1}>
             <Text>{opened.details === '' ? '(No further details.)' : opened.details}</Text>

@@ -55,6 +55,10 @@ export interface InboxItem {
   status: "open" | "accepted" | "declined" | "countered";
   /** The sender says these people also received it, as recipient tags. A claim by the sender, not verified. */
   group?: GroupInfo;
+  /** The earlier message with this contact that it answers. */
+  re?: string;
+  /** The latest receipt we sent back for it. */
+  receipted?: "delivered" | "shown";
 }
 
 export interface OutboxItem {
@@ -67,6 +71,39 @@ export interface OutboxItem {
   note?: string;
   /** Set when this was one copy of a message to several contacts; shown says whether they can see each other. */
   group?: GroupInfo & { shown: boolean };
+  re?: string;
+  /** When their side last told us something about it: a receipt or an answer. */
+  updated_at?: number;
+  receipt?: { delivered_at?: number; shown_at?: number; note?: string };
+}
+
+export interface Prefs {
+  inboxCheckMinutes: number;
+  /** False stops this profile sending receipts. */
+  receipts?: boolean;
+  /** A short status sent with delivery receipts, such as "Heads down until 2 pm". */
+  status?: { text: string; until?: number };
+  lastCatchUp?: number;
+}
+
+/** A message queued for later. Always sent as the agent, so the mandate is checked again when it falls due. */
+export interface Scheduled {
+  id: string;
+  to: string[];
+  body: RequestBody;
+  at: number;
+  re?: string;
+  /** Send only if this earlier request of ours is still unanswered: a reminder. */
+  unless_answered?: string;
+  showRecipients?: boolean;
+  team?: string;
+  tries?: number;
+}
+
+/** A local name for a set of contacts. Nothing about a team is shared except its name on messages sent to it. */
+export interface Team {
+  name: string;
+  members: string[];
 }
 
 export interface CommitmentRecord {
@@ -296,10 +333,112 @@ export class Termnl {
     return this.contacts().filter((c) => !c.pending && c.identity !== item.from && g.to.includes(recipientTag(g.id, c.identity)));
   }
 
+  prefs(): Prefs {
+    return this.store.read<Prefs>("prefs.json", { inboxCheckMinutes: 15 });
+  }
+  setPrefs(patch: Partial<Prefs>): Prefs {
+    const next = { ...this.prefs(), ...patch };
+    this.store.write("prefs.json", next);
+    return next;
+  }
+  /** The owner's status, while one is set and has not run out. */
+  status(): { text: string; until?: number } | undefined {
+    const s = this.prefs().status;
+    return s && (!s.until || s.until > now()) ? s : undefined;
+  }
+
+  teams(): Team[] {
+    return this.store.read<Team[]>("teams.json", []);
+  }
+  /** Create or replace a team; with no members, delete it. */
+  setTeam(name: string, members: string[]): Team[] {
+    const clean = name.trim().slice(0, 60);
+    if (!clean || /[\p{Cc},]/u.test(clean)) throw new Error("Give the team a short name without commas");
+    if (this.contacts().some((c) => c.name?.toLowerCase() === clean.toLowerCase())) throw new Error("A contact already has that name");
+    const ids = [...new Set(members.map((m) => this.resolveContact(m).identity))];
+    if (ids.length > MAX_RECIPIENTS) throw new Error(`A team can have at most ${MAX_RECIPIENTS} members`);
+    const rest = this.teams().filter((t) => t.name.toLowerCase() !== clean.toLowerCase());
+    const next = ids.length ? [...rest, { name: clean, members: ids }] : rest;
+    this.store.write("teams.json", next);
+    return next;
+  }
+  /** Contacts for a list of names, any of which may be a team. */
+  private recipients(refs: string[]): { contacts: Contact[]; team?: string } {
+    const teams = this.teams();
+    let team: string | undefined;
+    const ids = refs.flatMap((ref) => {
+      const t = teams.find((x) => x.name.toLowerCase() === ref.trim().toLowerCase());
+      if (!t) return [this.resolveContact(ref).identity];
+      if (refs.length === 1) team = t.name;
+      return t.members;
+    });
+    return { contacts: [...new Set(ids)].map((i) => this.resolveContact(i)), team };
+  }
+
+  /** Everything exchanged with one contact, oldest first. */
+  conversation(ref: string): { dir: "in" | "out"; at: number; item: InboxItem | OutboxItem }[] {
+    const c = this.resolveContact(ref);
+    return [
+      ...this.inbox().filter((i) => i.from === c.identity).map((item) => ({ dir: "in" as const, at: item.received_at, item })),
+      ...this.outbox().filter((o) => o.to === c.identity).map((item) => ({ dir: "out" as const, at: item.sent_at, item })),
+    ].sort((a, b) => a.at - b.at);
+  }
+
+  /** What has happened since the owner last caught up. Calling it moves the marker. */
+  catchUp(): { since: number; messages: InboxItem[]; replies: OutboxItem[]; waiting: number; scheduled: number } {
+    const since = this.prefs().lastCatchUp ?? 0;
+    const result = {
+      since,
+      messages: this.inbox().filter((i) => i.received_at > since),
+      replies: this.outbox().filter((o) => (o.updated_at ?? 0) > since),
+      waiting: this.inbox().filter((i) => i.status === "open").length,
+      scheduled: this.scheduled().length,
+    };
+    this.setPrefs({ lastCatchUp: now() });
+    return result;
+  }
+
+  scheduled(): Scheduled[] {
+    return this.store.read<Scheduled[]>("scheduled.json", []);
+  }
+  /** Queue a message for later. It goes out when a Termnl process is running at or after that time. */
+  schedule(
+    to: string[],
+    raw: RequestBody,
+    at: number,
+    opts: { re?: string; unlessAnswered?: string; showRecipients?: boolean } = {},
+  ): Scheduled {
+    const body = requestBody.parse(raw);
+    if (body.attachments?.length) throw new Error("Scheduled messages cannot carry files yet");
+    if (!withinLimit(body, this.mandate().outbound)) throw new MandateError("Only messages inside the agent's mandate can be scheduled.");
+    if (!(at > now()) || at > now() + 366 * DAY) throw new Error("Choose a time in the future, within a year");
+    if (opts.unlessAnswered && !this.outbox().some((o) => o.id === opts.unlessAnswered)) throw new Error("No sent request with that id to wait on");
+    const { contacts, team } = this.recipients(to);
+    const all = this.scheduled();
+    if (all.length >= 100) throw new Error("Too many scheduled messages; cancel some first");
+    const item: Scheduled = { id: randomUUID(), to: contacts.map((c) => c.identity), body, at, re: opts.re, unless_answered: opts.unlessAnswered, showRecipients: opts.showRecipients, team };
+    this.store.write("scheduled.json", [...all, item]);
+    return item;
+  }
+  cancelScheduled(id: string): boolean {
+    const all = this.scheduled();
+    this.store.write("scheduled.json", all.filter((s) => s.id !== id));
+    return all.some((s) => s.id === id);
+  }
+
+  /** The owner has now been shown their open messages: tell each sender, once. */
+  async markShown(): Promise<void> {
+    if (this.prefs().receipts === false) return;
+    for (const i of this.inbox().filter((x) => x.status === "open" && x.receipted !== "shown")) {
+      const c = this.contacts().find((x) => x.identity === i.from);
+      if (c && !c.pending) await this.sendReceipt(c, i.id, "shown");
+    }
+  }
+
   // ---------- agent actions ----------
 
   /** Send a request. Outside the mandate it is refused unless the owner is sending it. */
-  async sendRequest(to: string, raw: RequestBody, opts: { owner?: boolean; group?: OutboxItem["group"] } = {}): Promise<OutboxItem> {
+  async sendRequest(to: string, raw: RequestBody, opts: { owner?: boolean; group?: OutboxItem["group"]; re?: string } = {}): Promise<OutboxItem> {
     const body = requestBody.parse(raw);
     if (!opts.owner && !withinLimit(body, this.mandate().outbound)) {
       throw new MandateError(
@@ -315,6 +454,11 @@ export class Termnl {
       contact = this.resolveContact(to);
       if (contact.pending) throw new Error("This pairing is not confirmed yet. It completes once they have checked their inbox; then try again.");
     }
+    // A reply can only point at something exchanged with this same contact. One copy of a group send may not qualify.
+    const who = contact.identity;
+    const known = !!opts.re && (this.inbox().some((i) => i.id === opts.re && i.from === who) || this.outbox().some((o) => o.id === opts.re && o.to === who));
+    if (opts.re && !known && !opts.group) throw new Error("in_reply_to must be a message exchanged with this contact");
+    const re = known ? opts.re : undefined;
     const id = randomUUID();
     const item: OutboxItem = {
       id,
@@ -324,9 +468,14 @@ export class Termnl {
       sent_at: now(),
       status: "open",
       group: opts.group,
+      re,
     };
     // Hidden recipients send nothing extra, so a receiver cannot even tell it went to others.
-    await this.send(contact, { type: "request", body }, id, opts.group?.shown ? { id: opts.group.id, to: opts.group.to.map((i) => recipientTag(opts.group!.id, i)) } : undefined);
+    const g = opts.group;
+    await this.send(contact, { type: "request", body }, id, {
+      group: g?.shown ? { id: g.id, to: g.to.map((i) => recipientTag(g.id, i)), name: g.name } : undefined,
+      re,
+    });
     const outbox = this.outbox();
     outbox.push(item);
     this.store.write("outbox.json", outbox);
@@ -340,16 +489,19 @@ export class Termnl {
   async sendToMany(
     to: string[],
     raw: RequestBody,
-    opts: { owner?: boolean; showRecipients?: boolean } = {},
+    opts: { owner?: boolean; showRecipients?: boolean; re?: string; team?: string } = {},
   ): Promise<{ group: string; sent: OutboxItem[]; failed: { to: string; error: string }[] }> {
-    // Resolve everyone first, so a mistyped name stops the send before anyone gets a copy.
-    const contacts = [...new Map(to.map((ref) => this.resolveContact(ref)).map((c) => [c.identity, c])).values()];
-    if (contacts.length < 2 || contacts.length > MAX_RECIPIENTS) throw new Error(`Choose between 2 and ${MAX_RECIPIENTS} different contacts`);
-    const group = { id: randomUUID(), to: contacts.map((c) => c.identity), shown: !!opts.showRecipients };
+    // Resolve everyone first, so a mistyped name stops the send before anyone gets a copy. A name may be a team.
+    const { contacts, team } = this.recipients(to);
+    if (contacts.length > MAX_RECIPIENTS) throw new Error(`At most ${MAX_RECIPIENTS} contacts at once`);
+    if (contacts.length === 1) return { group: "", sent: [await this.sendRequest(contacts[0].identity, raw, { owner: opts.owner, re: opts.re })], failed: [] };
+    const name = opts.team ?? team;
+    // A team is a known set of people, so its members see each other unless told otherwise.
+    const group = { id: randomUUID(), to: contacts.map((c) => c.identity), shown: opts.showRecipients ?? !!name, name };
     const sent: OutboxItem[] = [], failed: { to: string; error: string }[] = [];
     for (const c of contacts) {
       try {
-        sent.push(await this.sendRequest(c.identity, raw, { owner: opts.owner, group }));
+        sent.push(await this.sendRequest(c.identity, raw, { owner: opts.owner, group, re: opts.re }));
       } catch (e) {
         if (e instanceof MandateError) throw e; // the same for every recipient, and nothing has been sent yet
         failed.push({ to: c.identity, error: (e as Error).message });
@@ -445,8 +597,10 @@ export class Termnl {
       onauth: async (event) => finalizeEvent(event, this.sk),
     });
     const fallback = setInterval(check, Math.max(5, opts.fallbackMinutes ?? 15) * 60_000);
-    (fallback as { unref?: () => void }).unref?.();
-    return () => { clearTimeout(timer); clearInterval(fallback); sub.close(); };
+    // A local file read, not a network call: only goes to the relays when a scheduled message has fallen due.
+    const due = setInterval(() => { if (this.scheduled().some((s) => s.at <= now())) void check(); }, 30_000);
+    for (const t of [fallback, due]) (t as { unref?: () => void }).unref?.();
+    return () => { clearTimeout(timer); clearInterval(fallback); clearInterval(due); sub.close(); };
   }
 
   private async syncNow(): Promise<{ processed: number; dropped: number; capped?: true }> {
@@ -489,7 +643,8 @@ export class Termnl {
       seen.envelopes.push(env.id);
       try {
         const ok = await this.handle(sender, env);
-        ok ? processed++ : dropped++;
+        // A receipt is bookkeeping, not something new for the owner, so it is not counted as processed.
+        if (env.type !== "receipt" || !ok) ok ? processed++ : dropped++;
         // Only paired contacts reach the log, so a stranger cannot flood it or push out real history.
         if (ok || isContact(sender)) this.log("in", sender, ok ? env.type : `dropped:${env.type}`, env.id);
       } catch (e) {
@@ -501,6 +656,7 @@ export class Termnl {
     seen.envelopes = seen.envelopes.slice(-5000);
     seen.last_sync = started;
     this.store.write("seen.json", seen);
+    await this.flushScheduled();
     return { processed, dropped, ...(capped && { capped }) };
   }
 
@@ -545,12 +701,12 @@ export class Termnl {
     to: Contact,
     msg: { type: Envelope["type"]; body: unknown },
     id: string = randomUUID(),
-    group?: GroupInfo,
+    extra: { group?: GroupInfo; re?: string } = {},
   ): Promise<void> {
     if (!certValid(this.agent.cert, this.config.identity, this.agentPub)) {
       throw new Error("This agent key has expired. The owner must run: termnl rotate");
     }
-    const env = envelope.parse({ v: 1, id, sent_at: now(), expires_at: now() + 14 * DAY, group, ...msg });
+    const env = envelope.parse({ v: 1, id, sent_at: now(), expires_at: now() + 14 * DAY, ...extra, ...msg });
     const wrap = wrapEvent({ kind: KIND.ENVELOPE, content: JSON.stringify(env), tags: [], created_at: now() }, this.sk, to.agent);
     const results = await Promise.allSettled(this.pool.publish(to.relays, wrap, {
       onauth: async (event) => finalizeEvent(event, this.sk), maxWait: 10000,
@@ -587,8 +743,13 @@ export class Termnl {
     switch (env.type) {
       case "knock_accept":
         return true;
-      case "request":
-        return this.onRequest(contact, env.id, env.body, env.group);
+      case "request": {
+        const ok = this.onRequest(contact, env.id, env.body, env.group, env.re);
+        if (ok) await this.sendReceipt(contact, env.id, "delivered");
+        return ok;
+      }
+      case "receipt":
+        return this.onReceipt(contact, env.body);
       case "response":
         return this.onResponse(contact, env.body);
       case "cosign":
@@ -624,7 +785,57 @@ export class Termnl {
     return true;
   }
 
-  private onRequest(contact: Contact, id: string, body: RequestBody, group?: GroupInfo): boolean {
+  /** Best effort, and silent when the owner has turned receipts off. A receipt never gets a receipt. */
+  private async sendReceipt(contact: Contact, requestId: string, state: "delivered" | "shown"): Promise<void> {
+    if (this.prefs().receipts === false) return;
+    try {
+      await this.send(contact, { type: "receipt", body: { request_id: requestId, state, note: state === "delivered" ? this.status()?.text : undefined } });
+      const inbox = this.inbox();
+      const item = inbox.find((i) => i.id === requestId);
+      if (item) { item.receipted = state; this.store.write("inbox.json", inbox); }
+    } catch { /* a courtesy: never fail a check over it */ }
+  }
+
+  private onReceipt(contact: Contact, body: Extract<Envelope, { type: "receipt" }>["body"]): boolean {
+    const outbox = this.outbox();
+    const item = outbox.find((o) => o.id === body.request_id && o.to === contact.identity);
+    if (!item) return false;
+    const r = item.receipt ?? {};
+    r.delivered_at ??= now();
+    if (body.state === "shown") r.shown_at ??= now();
+    if (body.note) r.note = body.note;
+    item.receipt = r;
+    item.updated_at = now();
+    this.store.write("outbox.json", outbox);
+    return true;
+  }
+
+  private flushing = false;
+  /** Send what has fallen due. It runs inside a check, so the profile lock stops two processes sending the same one. */
+  private async flushScheduled(): Promise<void> {
+    if (this.flushing) return;
+    this.flushing = true;
+    try {
+      for (const s of this.scheduled().filter((x) => x.at <= now())) {
+        let done = true;
+        try {
+          const waited = s.unless_answered ? this.outbox().find((o) => o.id === s.unless_answered) : undefined;
+          if (!s.unless_answered || waited?.status === "open") {
+            await this.sendToMany(s.to, s.body, { showRecipients: s.showRecipients, re: s.re, team: s.team });
+          }
+        } catch (e) {
+          done = e instanceof MandateError || (s.tries ?? 0) >= 4; // stop trying what will never send
+          this.log("out", s.to[0] ?? "", done ? "scheduled:dropped" : "scheduled:retry", s.id, String((e as Error).message));
+        }
+        const all = this.scheduled();
+        this.store.write("scheduled.json", done ? all.filter((x) => x.id !== s.id) : all.map((x) => (x.id === s.id ? { ...x, tries: (x.tries ?? 0) + 1 } : x)));
+      }
+    } finally {
+      this.flushing = false;
+    }
+  }
+
+  private onRequest(contact: Contact, id: string, body: RequestBody, group?: GroupInfo, re?: string): boolean {
     const inbox = this.inbox();
     // Keep record-level idempotency even after the bounded seen cache expires.
     if (inbox.some(item => item.id === id)) return false;
@@ -640,6 +851,8 @@ export class Termnl {
       authority: withinLimit(body, m.autoAccept) ? "auto" : "needs_owner",
       status: "open",
       group,
+      // Keep the pointer only when it names something we really exchanged with this contact.
+      re: re && (this.outbox().some((o) => o.id === re && o.to === contact.identity) || inbox.some((i) => i.id === re && i.from === contact.identity)) ? re : undefined,
     });
     this.store.write("inbox.json", inbox);
     return true;
@@ -653,6 +866,7 @@ export class Termnl {
     if (body.decision !== "accept") {
       item.status = body.decision === "decline" ? "declined" : "countered";
       item.note = body.note;
+      item.updated_at = now();
       this.store.write("outbox.json", outbox);
       return true;
     }
@@ -676,6 +890,7 @@ export class Termnl {
     all.push({ request_id: item.id, with: contact.identity, role: "requester", commitment: c, cosign, certs: { mine: this.agent.cert, theirs: contact.cert } });
     this.store.write("commitments.json", all);
     item.status = "committed";
+    item.updated_at = now();
     this.store.write("outbox.json", outbox);
     await this.send(contact, { type: "cosign", body: { request_id: item.id, cosign } });
     return true;

@@ -68,7 +68,12 @@ const pairingBody = z.object({
  */
 export const MAX_RECIPIENTS = 20;
 /** Recipients are named by recipientTag, never by key: a receiver can recognise people they already trust and learns nothing about the rest. */
-export const groupInfo = z.object({ id: z.string().uuid(), to: z.array(hex64).min(2).max(MAX_RECIPIENTS) });
+export const groupInfo = z.object({
+  id: z.string().uuid(),
+  to: z.array(hex64).min(2).max(MAX_RECIPIENTS),
+  /** The sender's own name for the team it went to. Their words, not a verified fact. */
+  name: z.string().max(60).regex(/^[^\p{Cc}]*$/u, "no control characters").optional(),
+});
 export type GroupInfo = z.infer<typeof groupInfo>;
 
 export const envelope = z.discriminatedUnion("type", [
@@ -86,6 +91,11 @@ export const envelope = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("cosign"), body: z.object({ request_id: z.string().uuid(), cosign: nostrEvent }) }),
   z.object({ type: z.literal("cert_update"), body: z.object({ cert: nostrEvent }) }),
+  /** A courtesy note back to the sender: the message arrived, or was shown to its owner. Older clients drop it. */
+  z.object({
+    type: z.literal("receipt"),
+    body: z.object({ request_id: z.string().uuid(), state: z.enum(["delivered", "shown"]), note: z.string().max(200).optional() }),
+  }),
 ]).and(
   z.object({
     v: z.literal(1),
@@ -93,6 +103,8 @@ export const envelope = z.discriminatedUnion("type", [
     sent_at: z.number().int(),
     expires_at: z.number().int().optional(),
     group: groupInfo.optional(),
+    /** The earlier message this one answers. Outside the body, like group. */
+    re: z.string().uuid().optional(),
   }),
 );
 export type Envelope = z.infer<typeof envelope>;
@@ -116,6 +128,8 @@ export const mandate = z.object({
   maxOpenPerContact: z.number().int().positive(),
   /** Whether the agent may attach local files to what it sends. Off unless the owner turns it on. */
   agentMaySendFiles: z.boolean().default(false),
+  /** Whether the agent may create and accept pairing invites when the owner asks in chat. Off unless the owner turns it on. */
+  agentMayPair: z.boolean().default(false),
 });
 export type Mandate = z.infer<typeof mandate>;
 
@@ -125,6 +139,7 @@ export const DEFAULT_MANDATE: Mandate = {
   outbound: { kinds: ["request", "inform"], maxAmount: 0, currency: "AUD" },
   maxOpenPerContact: 20,
   agentMaySendFiles: false,
+  agentMayPair: false,
 };
 
 /** Deterministic JSON so both parties hash and sign identical bytes. */

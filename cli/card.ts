@@ -111,6 +111,16 @@ body[data-standalone]{max-width:880px;margin:auto;padding:20px}
     if (item.value && item.value.amount != null) { var a = el("span", "", "Amount "); a.appendChild(el("b", "", item.value.currency + " " + Number(item.value.amount).toLocaleString())); facts.appendChild(a); }
     if (u.due) { var d = el("span", "", "Due "); d.appendChild(el("b", "", u.due)); facts.appendChild(d); }
     if (facts.childNodes.length) more.appendChild(facts);
+    var re = item.in_reply_to && item.in_reply_to.untrusted_text && item.in_reply_to.untrusted_text.subject;
+    if (re) more.appendChild(el("div", "said", "In reply to: " + re));
+    var team = sent ? item.team : item.untrusted_team_name;
+    if (team) more.appendChild(el("div", "said", (sent ? "Sent to your team: " : "Sent to their team: ") + team));
+    var rc = item.receipt;
+    if (rc && (rc.delivered || rc.shown_to_them)) {
+      var line = rc.shown_to_them ? "Shown to them " + when(rc.shown_to_them) : "Delivered " + when(rc.delivered);
+      var theirs = rc.untrusted_text && rc.untrusted_text.their_status;
+      more.appendChild(el("div", "said", line + (theirs ? " · Their status: " + theirs : "")));
+    }
     var also = item.also_sent_to;
     if (also && also.length) {
       var names = also.map(function(c){ return (c.untrusted_text && c.untrusted_text.declared_name) || "Unknown contact"; });
