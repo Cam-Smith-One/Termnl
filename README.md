@@ -46,8 +46,7 @@ relays, so there is no Termnl account, no email address and no central message s
 Each person decides what their agent may do on their behalf.
 
 > **Status:** an MIT-licensed prototype. It works end to end and has had an internal security
-> review ([details](docs/SECURITY-REVIEW.md)), but not an independent audit. See [Known limits](#known-limits). The source repository is private during
-> testing; the CLI and plugin are public on npm.
+> review ([details](docs/SECURITY-REVIEW.md)), but not an independent audit. See [Known limits](#known-limits).
 
 ## Contents
 
@@ -55,6 +54,7 @@ Each person decides what their agent may do on their behalf.
 - [How it works](#how-it-works)
 - [Quick start](#quick-start)
 - [Where this is going](#where-this-is-going)
+- [Claude Code panel](#claude-code-panel-experimental)
 - Reference: [browser console](#try-it-by-hand-in-the-browser) ·
   [CLI and agent plugin](#local-cli-and-agent-plugin) ·
   [authority and messages](#authority-and-messages) ·
@@ -82,6 +82,7 @@ Each person decides what their agent may do on their behalf.
 | **Say when you're busy** | Set a status such as "Heads down until 2 pm". Senders see it, and your notifications are held. |
 | **Teams** | Name a set of contacts and message them all at once. Members only ever see people they have paired with themselves. |
 | **Hear about it straight away** | While your agent is open you get a desktop notification within seconds of a message arriving, without polling. |
+| **An inbox in Claude Code** | A panel beside your chat lists what people have sent you, with reply, forward and new message buttons. |
 | **See it as a card** | Chat apps that support MCP Apps show messages as a card with buttons; terminals get a tidy Markdown list; Claude Code has an inbox panel. |
 
 ## How it works
@@ -109,7 +110,8 @@ sequenceDiagram
 3. **Relays carry sealed envelopes.** They see only encrypted gift wraps, never the content.
    What a relay can still observe is listed under [Known limits](#known-limits).
 4. **You hold the authority.** Pairing, approving anything outside the mandate, editing the
-   mandate and rotating keys are done by you, not by the agent.
+   mandate and rotating keys are done by you, not by the agent. Pairing from chat is possible only
+   if you switch it on.
 
 ## Quick start
 
@@ -204,7 +206,7 @@ To build from source instead (also needs pnpm 10.28.2):
 ```sh
 git clone https://github.com/Cam-Smith-One/Termnl.git termnl && cd termnl
 pnpm install --frozen-lockfile && pnpm build:cli
-node dist-cli/termnl.mjs init --name cam-agent
+node dist-cli/termnl.mjs init --name my-agent
 node dist-cli/termnl.mjs invite
 ```
 
@@ -254,6 +256,25 @@ act, so the mandate still applies. Other clients get the same content as Markdow
 
 ### Claude Code panel (experimental)
 
+`mods/termnl-messages` is a Claude Code mod that keeps a Termnl inbox beside your chat, in the desktop
+app and in the terminal:
+
+- **Inbox and Sent tabs**, with a row per message and unanswered ones marked.
+- **A reading view** with what a message replies to, the team it was sent to, and any receipt.
+- **Buttons** for Acknowledge or Accept, Decline, Suggest a change, Reply or Follow up, Forward and New.
+  A button only asks your agent to act, so the mandate still applies.
+- **A toast and a status line** when something new arrives.
+
+It rereads the profile's local files every 30 seconds and leaves fetching to the plugin. Load it with:
+
+```sh
+claude --plugin-dir mods/termnl-messages   # then type /termnl
+```
+
+Claude Code mods are early access and the API may change.
+
+### Codex browser panel
+
 Codex connections that do not advertise MCP Apps receive a private local card-view
 URL with incoming and sent messages. Ask Codex to open it in its right browser panel.
 The view shows the full paragraphs, sender, date, status and attachments. It is
@@ -263,13 +284,6 @@ only while that MCP process is running. Checking messages updates the snapshot;
 refresh the panel afterwards. Native inline MCP cards remain available to compatible
 hosts. Restart the MCP connection after upgrading; an already running process keeps
 the previous code. Do not share the private viewer URL.
-
-`mods/termnl-messages` is a Claude Code mod that keeps a Termnl panel beside the chat:
-Inbox and Sent tabs, a row per message, and a reading view with Accept, Decline and
-Suggest a change buttons. It rereads the profile's local files every 30 seconds, shows a toast
-when something new arrives, and leaves fetching to the plugin. A button only asks the agent to act, so the mandate still applies. Load it with
-`claude --plugin-dir mods/termnl-messages`, then `/termnl`. Claude Code mods are early
-access and the API may change.
 
 Browser and CLI/plugin profiles are separate identities in this release. They
 can pair with each other; they do not share an unlocked browser identity or an
@@ -407,7 +421,8 @@ pnpm build
 contains the Node file store and esbuild entry points; `dist-cli/` is generated.
 The test suite covers the original nine protocol cases, browser key persistence,
 wrong-passphrase/lock/unlock, handle signatures/PoW/payload binding, relay auth and
-the MCP authority boundary. Old app history is retained in Git at `3e86046`.
+the MCP authority boundary, multi-recipient sends, receipts, scheduling, teams and the security fixes.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a map of the code.
 
 ## Known limits
 
