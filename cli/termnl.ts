@@ -26,7 +26,8 @@ const HELP = `termnl <command>
   sync                                                     fetch and process new messages
   inbox [--all]                                            list inbound requests
   approve <request-id> [--accept]                          approve a request outside the mandate
-  send <contact> <request|offer|inform> <subject> [--details ..] [--amount n] [--currency AUD] [--due date] [--file path ...]
+  send <contact[,contact...]> <request|offer|inform> <subject> [--details ..] [--amount n] [--currency AUD] [--due date] [--file path ...]
+                                                           several contacts each get their own copy; add --show-recipients to let them see each other
   save <request-id>                                        download and decrypt a request's attachments (saved, never opened)
   commitments                                              list signed commitments
   accept|decline|counter <request-id> [note]                 respond (accept needs mandate or prior owner approval)
@@ -50,6 +51,7 @@ const { values, positionals } = parseArgs({
     minutes: { type: "string" },
     days: { type: "string" },
     all: { type: "boolean" },
+    "show-recipients": { type: "boolean" },
     accept: { type: "boolean" },
     details: { type: "string" },
     amount: { type: "string" },
@@ -140,11 +142,13 @@ async function main(): Promise<void> {
         const [to, kind, subject] = args;
         if (!to || !kind || !subject) throw new Error("usage: send <contact> <request|offer|inform> <subject>");
         const value = values.amount ? { amount: Number(values.amount), currency: values.currency ?? "AUD" } : undefined;
-        const item = await mail.sendRequest(
-          to,
-          { kind: kind as "request" | "offer" | "inform", subject, details: values.details, value, due: values.due, attachments: values.file?.length ? await attach(values.file) : undefined },
-          { owner: true },
-        );
+        const body = { kind: kind as "request" | "offer" | "inform", subject, details: values.details, value, due: values.due, attachments: values.file?.length ? await attach(values.file) : undefined };
+        const many = to.split(",").map((t) => t.trim()).filter(Boolean);
+        if (many.length > 1) {
+          const r = await mail.sendToMany(many, body, { owner: true, showRecipients: values["show-recipients"] });
+          return out(`Sent to ${r.sent.length} of ${many.length} (${values["show-recipients"] ? "they can see each other" : "recipients hidden from each other"})${r.failed.map((f) => `\nFailed for ${npubEncode(f.to)}: ${f.error}`).join("")}`);
+        }
+        const item = await mail.sendRequest(to, body, { owner: true });
         return out(`Sent ${item.id}`);
       }
       case "save": {

@@ -20,6 +20,9 @@ import {
   type Envelope,
   type Mandate,
   type RequestBody,
+  type GroupInfo,
+  MAX_RECIPIENTS,
+  recipientTag,
   type SignedEvent,
 } from "./protocol";
 import type { Store } from "./store";
@@ -50,6 +53,8 @@ export interface InboxItem {
   received_at: number;
   authority: "auto" | "needs_owner" | "owner_approved";
   status: "open" | "accepted" | "declined" | "countered";
+  /** The sender says these people also received it, as recipient tags. A claim by the sender, not verified. */
+  group?: GroupInfo;
 }
 
 export interface OutboxItem {
@@ -60,6 +65,8 @@ export interface OutboxItem {
   sent_at: number;
   status: "open" | "declined" | "countered" | "committed";
   note?: string;
+  /** Set when this was one copy of a message to several contacts; shown says whether they can see each other. */
+  group?: GroupInfo & { shown: boolean };
 }
 
 export interface CommitmentRecord {
@@ -282,10 +289,17 @@ export class Termnl {
     throw new Error(`No paired contact "${ref}"`);
   }
 
+  /** Of the people the sender says also got a message, the ones this owner has paired with. Everyone else is left off. */
+  coRecipients(item: InboxItem): Contact[] {
+    const g = item.group;
+    if (!g) return [];
+    return this.contacts().filter((c) => !c.pending && c.identity !== item.from && g.to.includes(recipientTag(g.id, c.identity)));
+  }
+
   // ---------- agent actions ----------
 
   /** Send a request. Outside the mandate it is refused unless the owner is sending it. */
-  async sendRequest(to: string, raw: RequestBody, opts: { owner?: boolean } = {}): Promise<OutboxItem> {
+  async sendRequest(to: string, raw: RequestBody, opts: { owner?: boolean; group?: OutboxItem["group"] } = {}): Promise<OutboxItem> {
     const body = requestBody.parse(raw);
     if (!opts.owner && !withinLimit(body, this.mandate().outbound)) {
       throw new MandateError(
@@ -309,12 +323,39 @@ export class Termnl {
       request_hash: this.requestHash(id, this.config.identity, contact.identity, body),
       sent_at: now(),
       status: "open",
+      group: opts.group,
     };
-    await this.send(contact, { type: "request", body }, id);
+    // Hidden recipients send nothing extra, so a receiver cannot even tell it went to others.
+    await this.send(contact, { type: "request", body }, id, opts.group?.shown ? { id: opts.group.id, to: opts.group.to.map((i) => recipientTag(opts.group!.id, i)) } : undefined);
     const outbox = this.outbox();
     outbox.push(item);
     this.store.write("outbox.json", outbox);
     return item;
+  }
+
+  /**
+   * Send the same request to several contacts. Each copy is encrypted to one person, and every reply and
+   * agreement stays one-to-one. Recipients see each other only when showRecipients is set.
+   */
+  async sendToMany(
+    to: string[],
+    raw: RequestBody,
+    opts: { owner?: boolean; showRecipients?: boolean } = {},
+  ): Promise<{ group: string; sent: OutboxItem[]; failed: { to: string; error: string }[] }> {
+    // Resolve everyone first, so a mistyped name stops the send before anyone gets a copy.
+    const contacts = [...new Map(to.map((ref) => this.resolveContact(ref)).map((c) => [c.identity, c])).values()];
+    if (contacts.length < 2 || contacts.length > MAX_RECIPIENTS) throw new Error(`Choose between 2 and ${MAX_RECIPIENTS} different contacts`);
+    const group = { id: randomUUID(), to: contacts.map((c) => c.identity), shown: !!opts.showRecipients };
+    const sent: OutboxItem[] = [], failed: { to: string; error: string }[] = [];
+    for (const c of contacts) {
+      try {
+        sent.push(await this.sendRequest(c.identity, raw, { owner: opts.owner, group }));
+      } catch (e) {
+        if (e instanceof MandateError) throw e; // the same for every recipient, and nothing has been sent yet
+        failed.push({ to: c.identity, error: (e as Error).message });
+      }
+    }
+    return { group: group.id, sent, failed };
   }
 
   /** Answer an inbound request. Accepting requires mandate authority or owner approval. */
@@ -456,11 +497,12 @@ export class Termnl {
     to: Contact,
     msg: { type: Envelope["type"]; body: unknown },
     id: string = randomUUID(),
+    group?: GroupInfo,
   ): Promise<void> {
     if (!certValid(this.agent.cert, this.config.identity, this.agentPub)) {
       throw new Error("This agent key has expired. The owner must run: termnl rotate");
     }
-    const env = envelope.parse({ v: 1, id, sent_at: now(), expires_at: now() + 14 * DAY, ...msg });
+    const env = envelope.parse({ v: 1, id, sent_at: now(), expires_at: now() + 14 * DAY, group, ...msg });
     const wrap = wrapEvent({ kind: KIND.ENVELOPE, content: JSON.stringify(env), tags: [], created_at: now() }, this.sk, to.agent);
     const results = await Promise.allSettled(this.pool.publish(to.relays, wrap, {
       onauth: async (event) => finalizeEvent(event, this.sk), maxWait: 10000,
@@ -498,7 +540,7 @@ export class Termnl {
       case "knock_accept":
         return true;
       case "request":
-        return this.onRequest(contact, env.id, env.body);
+        return this.onRequest(contact, env.id, env.body, env.group);
       case "response":
         return this.onResponse(contact, env.body);
       case "cosign":
@@ -534,7 +576,7 @@ export class Termnl {
     return true;
   }
 
-  private onRequest(contact: Contact, id: string, body: RequestBody): boolean {
+  private onRequest(contact: Contact, id: string, body: RequestBody, group?: GroupInfo): boolean {
     const inbox = this.inbox();
     // Keep record-level idempotency even after the bounded seen cache expires.
     if (inbox.some(item => item.id === id)) return false;
@@ -549,6 +591,7 @@ export class Termnl {
       received_at: now(),
       authority: withinLimit(body, m.autoAccept) ? "auto" : "needs_owner",
       status: "open",
+      group,
     });
     this.store.write("inbox.json", inbox);
     return true;

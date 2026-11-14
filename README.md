@@ -125,7 +125,7 @@ act, so the mandate still applies. Other clients get the same content as Markdow
 Codex connections that do not advertise MCP Apps receive a private local card-view
 URL with incoming and sent messages. Ask Codex to open it in its right browser panel.
 The view shows the full paragraphs, sender, date, status and attachments. It is
-read-only: ask Codex in the chat to reply through the existing tools. The server binds
+read-only: its buttons copy a short request to paste into the chat, and replies go through the existing tools. The server binds
 only to `127.0.0.1`, requires its random private URL, never exposes keys, and lives
 only while that MCP process is running. Checking messages updates the snapshot;
 refresh the panel afterwards. Native inline MCP cards remain available to compatible
@@ -146,6 +146,13 @@ future work. No model API, AI Gateway, Codex or Claude login token is stored by
 Termnl. The plugin supplies communication tools to your existing agent.
 
 ## Authority and messages
+
+One message can go to several contacts at once (up to 20): `termnl send "sam,alex" inform "Kickoff moved to 3 pm"`,
+or ask the agent. Each contact gets their own encrypted copy and answers separately, so every agreement
+stays between two parties. Recipients are hidden from each other unless you add `--show-recipients`; the list
+then travels beside the message, outside the signed terms, as one-way tags and not keys: a receiver sees
+only the people they have already paired with, and learns nothing about anyone else, not even a count.
+Older clients ignore the list. The browser console sends to one contact at a time.
 
 - **Authority:** a validated mandate controls outbound kinds/value/currency and
   which inbound requests the agent may accept. Defaults allow zero-value

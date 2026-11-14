@@ -62,6 +62,15 @@ const pairingBody = z.object({
   name: z.string().max(80).regex(/^[^\p{Cc}]*$/u, "no control characters").optional(),
 });
 
+/**
+ * Travels with each copy of a message sent to several contacts, when the sender chose to show who else got it.
+ * It sits outside the body, so it is not a term of any agreement and older clients ignore it.
+ */
+export const MAX_RECIPIENTS = 20;
+/** Recipients are named by recipientTag, never by key: a receiver can recognise people they already trust and learns nothing about the rest. */
+export const groupInfo = z.object({ id: z.string().uuid(), to: z.array(hex64).min(2).max(MAX_RECIPIENTS) });
+export type GroupInfo = z.infer<typeof groupInfo>;
+
 export const envelope = z.discriminatedUnion("type", [
   z.object({ type: z.literal("knock"), body: pairingBody.extend({ code: z.string().min(16).max(64) }) }),
   z.object({ type: z.literal("knock_accept"), body: pairingBody }),
@@ -83,6 +92,7 @@ export const envelope = z.discriminatedUnion("type", [
     id: z.string().uuid(),
     sent_at: z.number().int(),
     expires_at: z.number().int().optional(),
+    group: groupInfo.optional(),
   }),
 );
 export type Envelope = z.infer<typeof envelope>;
@@ -128,6 +138,10 @@ export function canonical(value: unknown): string {
 
 export function sha256hex(text: string): string {
   return bytesToHex(sha256(new TextEncoder().encode(text)));
+}
+
+export function recipientTag(groupId: string, identity: string): string {
+  return sha256hex(`termnl-recipient:${groupId}:${identity}`);
 }
 
 export function withinLimit(

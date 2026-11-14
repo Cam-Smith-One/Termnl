@@ -72,6 +72,34 @@ test("a request inside the mandate is accepted and both sides hold the same sign
   assert.equal(a.cosign!.id, s.cosign!.id);
 });
 
+test("one message to several contacts: separate copies, and co-recipients are shown only when asked", async () => {
+  const p = profile("many-p"), q = profile("many-q"), r = profile("many-r");
+  try {
+    for (const peer of [q, r]) { await peer.acceptInvite(p.createInvite()); await p.sync(); await peer.sync(); }
+    const ids = [q, r].map((m) => contactOf(p, m).identity);
+    await assert.rejects(p.sendToMany([ids[0], "nobody"], { kind: "inform", subject: "typo" }), /No paired contact/);
+    assert.equal(p.outbox().length, 0); // a bad name stops the send before anyone gets a copy
+
+    const hidden = await p.sendToMany(ids, { kind: "inform", subject: "hidden" });
+    const shown = await p.sendToMany(ids, { kind: "inform", subject: "shown" }, { showRecipients: true });
+    assert.equal(hidden.sent.length, 2); assert.equal(shown.failed.length, 0);
+    await q.sync(); await r.sync();
+    const got = (m: Termnl, subject: string) => m.inbox().find((i) => i.body.subject === subject)!;
+    assert.equal(got(q, "hidden").group, undefined);
+    // The list carries tags, not keys, and q has not paired with r, so r is left off for q entirely.
+    assert.ok(!JSON.stringify(got(q, "shown")).includes(ids[1]));
+    assert.deepEqual(q.coRecipients(got(q, "shown")), []);
+    await r.acceptInvite(q.createInvite()); await q.sync(); await r.sync();
+    assert.deepEqual(q.coRecipients(got(q, "shown")).map((c) => c.identity), [ids[1]]);
+    assert.deepEqual(r.coRecipients(got(r, "shown")).map((c) => c.identity), [ids[0]]);
+
+    // Each copy is still its own one-to-one agreement.
+    await q.respond(got(q, "shown").id, "accept"); await p.sync();
+    const copies = p.outbox().filter((o) => o.group?.id === shown.group);
+    assert.deepEqual(copies.map((o) => o.status).sort(), ["committed", "open"]);
+  } finally { for (const m of [p, q, r]) m.close(); }
+});
+
 test("the agent cannot send or accept anything outside the mandate; the owner can", async () => {
   const offer = { kind: "offer" as const, subject: "Website rebuild", value: { amount: 8400, currency: "AUD" } };
   await assert.rejects(sam.sendRequest("alex", offer), MandateError);

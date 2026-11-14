@@ -15,8 +15,8 @@ const STATUS: Record<string, string> = {
 }
 const HOME: View = { tab: 'inbox', open: '' }
 
-const messages = atom({ plugin: 'termnl-messages', key: 'messages' } as const, [], { shape: 'messages-1' })
-const sent = atom({ plugin: 'termnl-messages', key: 'sent' } as const, [], { shape: 'sent-1' })
+const messages = atom({ plugin: 'termnl-messages', key: 'messages' } as const, [], { shape: 'messages-2' })
+const sent = atom({ plugin: 'termnl-messages', key: 'sent' } as const, [], { shape: 'sent-2' })
 const view = atom({ plugin: 'termnl-messages', key: 'view' } as const, HOME, { shape: 'view-1' })
 const error = atom({ plugin: 'termnl-messages', key: 'error' } as const, '')
 
@@ -27,7 +27,26 @@ const load = async ($: EngineInterface) => {
     const file = async (name: string) => JSON.parse(await $.fs.read(`${stdout}/${name}`))
     const contacts = await file('contacts.json')
     const names = new Map<string, string>(contacts.map((c: any) => [c.identity, c.name]))
-    const shape = (who: 'from' | 'to', at: 'received_at' | 'sent_at') => (m: any): Message => ({
+    // Mirrors recipientTag in the Termnl core: co-recipients arrive as one-way tags, so only
+    // people already in the owner's contacts can be recognised. Everyone else is left off.
+    const tag = async (group: string, identity: string) => {
+      const bytes = new TextEncoder().encode(`termnl-recipient:${group}:${identity}`)
+      const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
+
+      return Array.from(hash, b => b.toString(16).padStart(2, '0')).join('')
+    }
+    const also = async (m: any, who: 'from' | 'to') => {
+      const to: string[] = m.group?.to ?? []
+      const known: string[] = []
+      for (const c of contacts) {
+        if (c.pending || c.identity === m[who]) continue
+        // What was sent keeps the keys; what was received carries tags.
+        if (to.includes(who === 'to' ? c.identity : await tag(m.group.id, c.identity))) known.push(c.name)
+      }
+
+      return known.join(', ')
+    }
+    const shape = (who: 'from' | 'to', at: 'received_at' | 'sent_at') => async (m: any): Promise<Message> => ({
       id: String(m.id),
       name: names.get(m[who]) ?? 'Unknown contact',
       kind: String(m.body?.kind ?? ''),
@@ -35,10 +54,12 @@ const load = async ($: EngineInterface) => {
       details: String(m.body?.details ?? ''),
       at: Number(m[at]) * 1000,
       status: String(m.status),
+      also: m.group ? await also(m, who) : '',
     })
     const newest = (a: Message, b: Message) => b.at - a.at
-    const inbox: Message[] = (await file('inbox.json')).map(shape('from', 'received_at')).sort(newest)
-    const outbox: Message[] = (await file('outbox.json').catch(() => [])).map(shape('to', 'sent_at')).sort(newest)
+    const all = (list: any[], one: (m: any) => Promise<Message>) => Promise.all(list.map(one))
+    const inbox = (await all(await file('inbox.json'), shape('from', 'received_at'))).sort(newest)
+    const outbox = (await all(await file('outbox.json').catch(() => []), shape('to', 'sent_at'))).sort(newest)
     await update($, messages, () => inbox)
     await update($, sent, () => outbox)
     await update($, error, () => '')
@@ -108,6 +129,9 @@ export const register: Register = on => {
     const opened = list.find(m => m.id === now.open)
     // Buttons ask the agent, naming the request id only, so the mandate still applies
     // and the other party's text is never replayed as the owner's words.
+    // Reply, forward and suggest need the owner's words, so they start a draft in the prompt box.
+    const draft = (verb: string, id: string, tail = ': ') => () =>
+      void $.prompt.fill({ text: `${verb} Termnl request ${id}${tail}` })
     const ask = (verb: string, id: string) => () => {
       void $.prompt.submit({ text: `${verb} Termnl request ${id}`, asUser: true })
       void $.ui.toast(`Asked your agent to ${verb.toLowerCase()} it`)
@@ -124,6 +148,7 @@ export const register: Register = on => {
             <Text>{isSent ? 'To' : 'From'} {opened.name}</Text>
             <Text dimColor>{clock(opened.at, true)} · {KIND[opened.kind] ?? opened.kind}</Text>
             <Text dimColor>{STATUS[opened.status] ?? opened.status}</Text>
+            {opened.also !== '' && <Text dimColor>Also sent to: {opened.also}</Text>}
           </Box>
           <Box marginTop={1}>
             <Text>{opened.details === '' ? '(No further details.)' : opened.details}</Text>
@@ -134,14 +159,15 @@ export const register: Register = on => {
                 {opened.kind === 'inform' ? 'Acknowledge' : 'Accept'}
               </Button>
               <Button key="decline" onPress={ask('Decline', opened.id)}>Decline</Button>
-              <Button
-                key="counter"
-                onPress={() => void $.prompt.fill({ text: `Suggest a change to Termnl request ${opened.id}: ` })}
-              >
-                Suggest a change
-              </Button>
+              <Button key="counter" onPress={draft('Suggest a change to', opened.id)}>Suggest a change</Button>
             </Box>
           )}
+          <Box flexDirection="row" gap={1} marginTop={1}>
+            <Button key="reply" onPress={draft(isSent ? 'Send a follow-up to' : 'Reply to', opened.id)}>
+              {isSent ? 'Follow up' : 'Reply'}
+            </Button>
+            <Button key="forward" onPress={draft('Forward', opened.id, ' to ')}>Forward</Button>
+          </Box>
         </Box>
       )
     }
@@ -154,6 +180,9 @@ export const register: Register = on => {
           </Button>
           <Button key="sent" variant={isSent ? 'primary' : undefined} onPress={go({ tab: 'sent', open: '' })}>
             Sent
+          </Button>
+          <Button key="compose" onPress={() => void $.prompt.fill({ text: 'Send a Termnl message to ' })}>
+            New
           </Button>
           <Button key="refresh" onPress={() => void sync($)}>Refresh</Button>
         </Box>

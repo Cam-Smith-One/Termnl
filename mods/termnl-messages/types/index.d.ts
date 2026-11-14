@@ -6,6 +6,8 @@ export type Message = {
   details: string
   at: number
   status: string
+  /** Names of people the viewer has paired with who also got it; empty when none. */
+  also: string
 }
 
 export type View = { tab: 'inbox' | 'sent'; open: string }

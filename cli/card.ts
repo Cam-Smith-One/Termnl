@@ -19,17 +19,25 @@ export const CARD_HTML = `<!doctype html>
 :root[data-theme=dark]{--panel:#0f1713;--ink:#e6f1eb;--body:#b7c7be;--muted:#8a9a91;--accent:#4ade80;--on:#04130b;--line:#22332a;--tint:#14261c;--warn:#eab308;--warnbg:#1f1a08;--warnline:#57430f;--danger:#f87171}
 *{box-sizing:border-box}
 body{margin:0;padding:2px;background:var(--page);color:var(--body);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
-.head{display:flex;align-items:center;gap:8px;margin:2px 2px 10px;color:var(--muted);font-size:12px;letter-spacing:.04em;text-transform:uppercase}
+.head{display:flex;align-items:center;gap:8px;margin:2px 2px 10px;min-height:32px;color:var(--muted);font-size:12px;letter-spacing:.04em;text-transform:uppercase}
 .head b{color:var(--accent);font-family:ui-monospace,Menlo,monospace;letter-spacing:0;text-transform:none;font-size:13px}
 .msg{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:10px}
-.top{display:flex;align-items:center;gap:10px}
+.top{display:flex;align-items:center;gap:10px;width:100%;padding:0;border:0;border-radius:8px;background:transparent;text-align:left;font-weight:400;color:inherit}
+.chev{flex:none;color:var(--muted);transition:transform .15s}
+.msg.open .chev{transform:rotate(90deg)}
+.msg:not(.open) .details{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;color:var(--muted)}
+.msg:not(.open) .more{display:none}
+.msg.new .subject::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent);margin-right:8px;vertical-align:1px}
+.bar .said{margin:0 2px 10px}
+.said{margin-top:10px;font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+@media (prefers-reduced-motion:reduce){.chev{transition:none}}
 .av{flex:none;width:36px;height:36px;border-radius:50%;background:var(--tint);color:var(--accent);display:grid;place-items:center;font-weight:700}
 .who{min-width:0;flex:1}
 .name{color:var(--ink);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .when{color:var(--muted);font-size:12px}
 .chip{flex:none;border:1px solid var(--line);border-radius:999px;padding:2px 9px;font-size:12px;color:var(--accent);background:var(--tint)}
 .subject{color:var(--ink);font-weight:600;font-size:15px;margin:12px 0 4px;overflow-wrap:anywhere}
-.details{white-space:pre-wrap;overflow-wrap:anywhere;max-height:9em;overflow:auto}
+.details{white-space:pre-wrap;overflow-wrap:anywhere}
 .facts{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:10px;font-size:13px}
 .facts span b{color:var(--ink)}
 .file{display:inline-block;border:1px dashed var(--line);border-radius:8px;padding:2px 8px;margin:8px 6px 0 0;font-size:12px}
@@ -42,10 +50,9 @@ button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 button:disabled{opacity:.5;cursor:default}
 .empty{padding:18px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:14px}
 body[data-standalone]{max-width:880px;margin:auto;padding:20px}
-body[data-standalone] .details{max-height:none;overflow:visible}
 .reply-help{color:var(--muted);font-size:13px;margin-bottom:14px}
 </style></head><body>
-<div class="head"><b>&gt;_ termnl</b><span id="title"></span></div>
+<div class="bar"><div class="head"><b>&gt;_ termnl</b><span id="title" style="flex:1"></span></div></div>
 <div id="list"><div class="empty">Loading messages…</div></div>
 <script>
 (function(){
@@ -65,40 +72,62 @@ body[data-standalone] .details{max-height:none;overflow:visible}
   var KIND = { request: "Request", offer: "Offer", inform: "For your information" };
   var STATUS = { open: "Waiting for a reply", accepted: "Agreed", committed: "Agreed and signed by both sides", declined: "Declined", countered: "They suggested a change" };
 
-  function say(text, row){
+  function say(text, row, final){
     // Ask the agent to act; the agent's own limits still apply. Only the request id is sent.
-    Array.prototype.forEach.call(row.querySelectorAll("button"), function(b){ b.disabled = true; });
-    request("ui/message", { role: "user", content: [{ type: "text", text: text }] });
+    // The local view has no route back to the agent, so there the button copies the request to paste into the chat.
+    var said = row.parentNode.querySelector(".said") || row.parentNode.appendChild(el("div", "said"));
+    said.setAttribute("role", "status");
+    if (!standalone) {
+      if (final) Array.prototype.forEach.call(row.querySelectorAll("button"), function(b){ b.disabled = true; });
+      request("ui/message", { role: "user", content: [{ type: "text", text: text }] });
+      said.textContent = "Sent to the chat.";
+      return;
+    }
+    var manual = function(){ said.textContent = "Type this in the chat: " + text; };
+    if (!navigator.clipboard) return manual();
+    navigator.clipboard.writeText(text).then(function(){ said.textContent = "Copied. Paste it into the chat to continue."; }, manual);
   }
 
   function card(item, sent){
     var u = item.untrusted_text || {}, party = sent ? item.to : item.from;
     var name = (party && party.untrusted_text && party.untrusted_text.declared_name) || "Unknown contact";
-    var box = el("div", "msg"), top = el("div", "top"), who = el("div", "who");
+    var box = el("div", "msg"), top = el("button", "top"), who = el("div", "who"), more = el("div", "more");
+    var isNew = !sent && item.status === "open";
+    if (isNew) box.classList.add("new");
+    top.type = "button"; top.setAttribute("aria-expanded", "false");
+    top.onclick = function(){ top.setAttribute("aria-expanded", String(box.classList.toggle("open"))); };
     top.appendChild(el("div", "av", name.trim().charAt(0).toUpperCase() || "?"));
     who.appendChild(el("div", "name", (sent ? "To " : "") + name));
     who.appendChild(el("div", "when", when(sent ? item.sent : item.received)));
     top.appendChild(who);
     top.appendChild(el("span", "chip", sent ? (STATUS[item.status] || String(item.status).replace(/_/g, " ")) : (KIND[item.kind] || item.kind)));
+    top.appendChild(el("span", "chev", "›"));
     box.appendChild(top);
     box.appendChild(el("div", "subject", sent ? item.subject : u.subject));
     if (u.details) box.appendChild(el("div", "details", u.details));
-    if (sent && u.note) box.appendChild(el("div", "note", "Their note: " + u.note));
+    box.appendChild(more);
+    if (sent && u.note) more.appendChild(el("div", "note", "Their note: " + u.note));
     var facts = el("div", "facts");
     if (item.value && item.value.amount != null) { var a = el("span", "", "Amount "); a.appendChild(el("b", "", item.value.currency + " " + Number(item.value.amount).toLocaleString())); facts.appendChild(a); }
     if (u.due) { var d = el("span", "", "Due "); d.appendChild(el("b", "", u.due)); facts.appendChild(d); }
-    if (facts.childNodes.length) box.appendChild(facts);
-    (u.attachments || []).forEach(function(f){ box.appendChild(el("span", "file", "📎 " + f.name + " · " + size(f.bytes))); });
-    if (sent || item.status !== "open" || standalone) return box;
+    if (facts.childNodes.length) more.appendChild(facts);
+    var also = item.also_sent_to;
+    if (also && also.length) {
+      var names = also.map(function(c){ return (c.untrusted_text && c.untrusted_text.declared_name) || "Unknown contact"; });
+      more.appendChild(el("div", "said", "Also sent to: " + names.join(", ")));
+    }
+    (u.attachments || []).forEach(function(f){ more.appendChild(el("span", "file", "📎 " + f.name + " · " + size(f.bytes))); });
     var owner = String(item.authority).indexOf("needs_owner") === 0;
-    if (owner) box.appendChild(el("div", "note", "Outside your agent's limits. Only you can approve it, in a terminal: termnl approve " + item.id));
+    if (isNew && owner) more.appendChild(el("div", "note", "Outside your agent's limits. Only you can approve it, in a terminal: termnl approve " + item.id));
     var acts = el("div", "acts");
-    function btn(label, cls, verb){ var b = el("button", cls, label); b.type = "button"; b.onclick = function(){ say(verb + " Termnl request " + item.id, acts); }; acts.appendChild(b); }
-    if (!owner) btn(item.kind === "inform" ? "Acknowledge" : "Accept", "go", "Accept");
-    btn("Decline", "no", "Decline");
-    btn("Suggest a change", "", "I want to suggest a change to");
-    if ((u.attachments || []).length) btn("Save files", "", "Save the attachments from");
-    box.appendChild(acts);
+    function btn(label, cls, verb, final){ var b = el("button", cls, label); b.type = "button"; b.onclick = function(){ say(verb + " Termnl request " + item.id, acts, final); }; acts.appendChild(b); }
+    if (isNew && !owner) btn(item.kind === "inform" ? "Acknowledge" : "Accept", "go", "Accept", true);
+    if (isNew) btn("Decline", "no", "Decline", true);
+    if (isNew) btn("Suggest a change", "", "I want to suggest a change to");
+    btn(sent ? "Follow up" : "Reply", isNew ? "" : "go", sent ? "I want to send a follow-up to" : "I want to reply to");
+    btn("Forward", "", "I want to forward");
+    if (!sent && (u.attachments || []).length) btn("Save files", "", "Save the attachments from");
+    more.appendChild(acts);
     return box;
   }
 
@@ -111,7 +140,15 @@ body[data-standalone] .details{max-height:none;overflow:visible}
     document.getElementById("title").textContent = items.length + (sent ? " sent for you" : " for you");
     if (!items.length) list.appendChild(el("div", "empty", sent ? "Nothing sent yet." : "Nothing waiting for you."));
     items.slice().reverse().forEach(function(i){ list.appendChild(card(i, sent)); });
+    // Open the newest message that still needs an answer, or the only one, so there is something to read at once.
+    var first = list.querySelector(".msg.new .top") || (items.length === 1 && list.querySelector(".top"));
+    if (first) first.click();
   }
+
+  var compose = el("button", "", "New message"); compose.type = "button";
+  compose.style.textTransform = "none"; compose.style.letterSpacing = "0"; compose.style.fontSize = "13px";
+  compose.onclick = function(){ say("I want to send a new Termnl message", compose.parentNode); };
+  document.querySelector(".head").appendChild(compose);
 
   window.addEventListener("message", function(ev){
     var m = ev.data; if (!m || m.jsonrpc !== "2.0") return;
@@ -122,7 +159,7 @@ body[data-standalone] .details{max-height:none;overflow:visible}
   });
   if (window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches) document.documentElement.dataset.theme = "dark";
   if (standalone) {
-    var help = el("div", "reply-help", "Private local view · Refresh after checking messages in Codex. To reply, ask Codex in the chat.");
+    var help = el("div", "reply-help", "Private local view · Refresh after checking messages in Codex. Buttons copy a request to paste into the chat.");
     document.getElementById("list").before(help);
     render(JSON.parse(document.getElementById("snapshot").textContent));
     return;

@@ -63,7 +63,7 @@ test("MCP offers a local card panel without UI support and preserves native MCP 
      assert.match(data.card_view.url,/^http:\/\/127\.0\.0\.1:/)
      const response=await fetch(data.card_view.url)
      assert.equal(response.status,200)
-     assert.match(await response.text(),/To reply, ask Codex in the chat/)
+     assert.match(await response.text(),/Buttons copy a request to paste into the chat/)
     }
    } finally {await client.close();await transport.close();rmSync(dir,{recursive:true,force:true})}
   }
