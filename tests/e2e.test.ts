@@ -197,6 +197,31 @@ test("scheduled messages wait for their time, and teams send to every member und
   } finally { for (const m of [p, q, r]) m.close(); }
 });
 
+test("security: a forged invite cannot redirect a confirmed contact, and an undeclared amount does not dodge the cap", async () => {
+  const p = profile("sec-p"), q = profile("sec-q");
+  try {
+    await q.acceptInvite(p.createInvite()); await p.sync(); await q.sync();
+    const before = contactOf(q, p);
+
+    // Anyone holding p's certificate can build an invite for p. For a confirmed contact, nothing in it is believed.
+    const real = decodeInvite(p.createInvite());
+    const forged = encodeInvite({ ...real, relays: ["ws://127.0.0.1:1"], name: "Someone else", code: "x".repeat(16) });
+    await q.acceptInvite(forged).catch(() => undefined); // the knock goes nowhere; the stored record must not move
+    assert.deepEqual(contactOf(q, p).relays, before.relays);
+    assert.equal(contactOf(q, p).name, before.name);
+    assert.equal(contactOf(q, p).pending, undefined);
+
+    // With requests allowed up to 100, a request that simply omits the amount still waits for the owner.
+    q.setMandate({ ...q.mandate(), autoAccept: { kinds: ["inform", "request"], maxAmount: 100, currency: "AUD" } });
+    const sly = await p.sendRequest(contactOf(p, q).identity, { kind: "request", subject: "You will pay AUD 50,000" });
+    const fair = await p.sendRequest(contactOf(p, q).identity, { kind: "request", subject: "Lunch", value: { amount: 40, currency: "AUD" } }, { owner: true });
+    await q.sync();
+    assert.equal(q.inbox().find((i) => i.id === sly.id)!.authority, "needs_owner");
+    assert.equal(q.inbox().find((i) => i.id === fair.id)!.authority, "auto");
+    await assert.rejects(q.respond(sly.id, "accept"), MandateError);
+  } finally { for (const m of [p, q]) m.close(); }
+});
+
 test("the agent cannot send or accept anything outside the mandate; the owner can", async () => {
   const offer = { kind: "offer" as const, subject: "Website rebuild", value: { amount: 8400, currency: "AUD" } };
   await assert.rejects(sam.sendRequest("alex", offer), MandateError);
@@ -322,7 +347,7 @@ test("request records stay idempotent after the bounded replay cache expires", a
 
 // ---- security review regressions ----
 import { hexToBytes } from "nostr-tools/utils";
-import { encodeInvite } from "../lib/termnl/protocol";
+import { decodeInvite, encodeInvite } from "../lib/termnl/protocol";
 
 test("re-pairing with a pre-rotation invite cannot bring back a retired key", async () => {
   const p = profile("p1"), q = profile("q1");

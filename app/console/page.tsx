@@ -463,7 +463,7 @@ export default function ConsolePage() {
         </form>
         </details>
         {resetting && <div role="alertdialog" aria-label="Delete local profile" className="space-y-3 border border-t-danger p-4 text-sm text-t-danger"><p>Delete {active} and its keys/history from this browser? This cannot be undone without a backup.</p><button className="mr-4 border border-t-danger p-2" onClick={() => { session.current?.store.reset(); lock(); setProfiles(BrowserStore.names()); setLockedName(BrowserStore.names()[0] || ""); setResetting(false); setEntries([{ id: ++counter.current, text: "Local profile deleted.", kind: "status" }]) }}>[DELETE THIS PROFILE]</button><button className="border border-t-line-strong p-2 text-t-accent" onClick={() => setResetting(false)}>[CANCEL]</button></div>}
-        <p className="text-xs leading-relaxed text-t-muted">Prototype: no security review, forward secrecy or remote signing. Public relays can lose messages. A compromised page can read unlocked keys. Peer text is untrusted. Back up before clearing browser data. New messages are fetched every 30 seconds while unlocked.</p>
+        <p className="text-xs leading-relaxed text-t-muted">Prototype: no independent security audit, forward secrecy or remote signing. Public relays can lose messages. A compromised page can read unlocked keys. Peer text is untrusted. Back up before clearing browser data. New messages are fetched every 30 seconds while unlocked.</p>
       </div>
     </div>
   </main>

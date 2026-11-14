@@ -53,7 +53,7 @@ export async function upload(file: { name: string; type?: string; bytes: Uint8Ar
   const results = await Promise.all(servers.map(async (server) => {
     try {
       const response = await fetch(`${server}/upload`, {
-        method: "PUT", body: sealed as BodyInit, signal: AbortSignal.timeout(60000),
+        redirect: "error", method: "PUT", body: sealed as BodyInit, signal: AbortSignal.timeout(60000),
         headers: { Authorization: `Nostr ${base64url(JSON.stringify(auth))}`, "Content-Type": "application/octet-stream", "X-SHA-256": hash },
       });
       return response.ok && (await response.json()).sha256 === hash ? server : null;
@@ -72,7 +72,8 @@ export async function download(input: Attachment): Promise<Uint8Array> {
   const att = attachment.parse(input);
   for (const server of att.servers) {
     try {
-      const response = await fetch(`${server}/${att.sha256}`, { signal: AbortSignal.timeout(60000) });
+      // The server address was checked; a redirect would send the request somewhere that was not.
+      const response = await fetch(`${server}/${att.sha256}`, { signal: AbortSignal.timeout(60000), redirect: "error" });
       // GCM adds a 16-byte tag; anything else is not our file, so do not even read it.
       if (!response.ok || Number(response.headers.get("content-length") ?? att.size + 16) !== att.size + 16) continue;
       const sealed = new Uint8Array(await response.arrayBuffer());

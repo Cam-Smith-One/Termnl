@@ -8,7 +8,7 @@
     "lint": "eslint app components lib cli tests tailwind.config.ts",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "pnpm build:cli && tsx --test tests/*.test.ts",
+    "test": "pnpm build:cli && TERMNL_TEST=1 tsx --test tests/*.test.ts",
     "build:cli": "node cli/build.mjs"
   },
   "dependencies": {

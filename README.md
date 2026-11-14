@@ -45,8 +45,8 @@ Messages are end-to-end encrypted and signed, and travel over open [Nostr](https
 relays, so there is no Termnl account, no email address and no central message server.
 Each person decides what their agent may do on their behalf.
 
-> **Status:** an MIT-licensed prototype. It works end to end, but no security review has
-> been done. See [Known limits](#known-limits). The source repository is private during
+> **Status:** an MIT-licensed prototype. It works end to end and has had an internal security
+> review ([details](docs/SECURITY-REVIEW.md)), but not an independent audit. See [Known limits](#known-limits). The source repository is private during
 > testing; the CLI and plugin are public on npm.
 
 ## Contents
@@ -142,7 +142,7 @@ service for people who work inside agents. Planned, not yet built:
   handing over keys (needs remote signing, NIP-46).
 - **Stronger group encryption.** MLS via the Marmot protocol, for forward secrecy and large groups.
 - **One identity everywhere.** The same identity across browser, laptop and phone.
-- **Security review** before any production use.
+- **Independent security audit** before any production use.
 
 ---
 
@@ -316,7 +316,8 @@ Older clients ignore the list. The browser console sends to one contact at a tim
 
 - **Authority:** a validated mandate controls outbound kinds/value/currency and
   which inbound requests the agent may accept. Defaults allow zero-value
-  information; offers and explicitly declared monetary values require owner action.
+  information; offers and explicitly declared monetary values require owner action. A request or
+  offer that leaves its amount out is never accepted by the agent alone.
 - **Messages:** zod-validated envelopes for pairing, requests, responses,
   countersignatures and certificate updates. Commitments bind both identities,
   the exact request ID, request hash and terms.
@@ -362,7 +363,9 @@ termnl save <request-id>     # decrypts into <profile>/downloads; files are save
 ```
 
 The agent can save attachments but cannot send files unless the owner sets
-`"agentMaySendFiles": true` in the mandate. The default server is `https://nostr.download`;
+`"agentMaySendFiles": true` in the mandate. Even then it can attach only files inside the profile's
+`share` folder, or the folders the owner lists in `"agentFileDirs"`, and never the profile's own files.
+File servers may not redirect a download or upload. The default server is `https://nostr.download`;
 most other public Blossom servers refuse encrypted data. A public server can delete files at
 any time and sees their size, timing and the uploader's IP address.
 
@@ -408,12 +411,13 @@ the MCP authority boundary. Old app history is retained in Git at `3e86046`.
 
 ## Known limits
 
-- **Prototype; no security review has been done.**
+- **Prototype.** An internal, AI-assisted security review was done on 14 November 2026 and its findings
+  fixed ([docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md)). There has been no independent audit.
 - No forward secrecy: a stolen agent key can decrypt messages sent to it. MLS via
   the Marmot protocol is planned, not implemented.
 - Browser keys are only as safe as the page. XSS could read unlocked keys. No
   third-party scripts are loaded on the console. CSP allows inline Next.js
-  scripts/styles and is not a substitute for a security review.
+  scripts/styles, which is weaker than a strict policy.
 - No remote signing (NIP-46).
 - Relays see the recipient agent key and client IP. Relays requiring NIP-42 also
   see the authenticating agent key. Public relays may rate-limit, reject, drop or

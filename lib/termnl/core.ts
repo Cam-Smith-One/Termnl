@@ -16,6 +16,7 @@ import {
   requestBody,
   sha256hex,
   withinLimit,
+  autoAcceptable,
   relayList,
   type Envelope,
   type Mandate,
@@ -240,17 +241,21 @@ export class Termnl {
     if (!certValid(inv.cert, inv.identity, inv.agent)) throw new Error("Invite has an invalid or expired certificate");
     // An invite is only a claim: anyone can build one from a certificate they have seen.
     // The contact stays pending until its agent key actually writes to us.
-    const proven = this.contacts().some((c) => c.identity === inv.identity && c.agent === inv.agent && !c.pending);
-    const contact = this.saveContact({
+    // For someone already confirmed, nothing in the invite is believed: their record changes only when
+    // their own agent key answers (see onKnockAccept). Otherwise a third party holding their certificate
+    // could quietly redirect our messages to them.
+    const known = this.contacts().find((c) => c.identity === inv.identity && c.agent === inv.agent && !c.pending);
+    const contact = known ?? this.saveContact({
       identity: inv.identity,
       agent: inv.agent,
       cert: inv.cert,
       relays: inv.relays,
       name: inv.name,
       paired_at: now(),
-      ...(!proven && { pending: true }),
+      pending: true,
     });
-    await this.send(contact, { type: "knock", body: { ...this.pairingBody(), code: inv.code } });
+    // The knock itself goes where the invite says, so a contact who really has moved relays still receives it.
+    await this.send({ ...contact, relays: inv.relays }, { type: "knock", body: { ...this.pairingBody(), code: inv.code } });
     return contact;
   }
 
@@ -525,7 +530,7 @@ export class Termnl {
 
     let commitment: SignedEvent | undefined;
     if (decision === "accept") {
-      if (!opts.owner && item.authority !== "owner_approved" && !withinLimit(item.body, this.mandate().autoAccept)) {
+      if (!opts.owner && item.authority !== "owner_approved" && !autoAcceptable(item.body, this.mandate().autoAccept)) {
         throw new MandateError(
           `Accepting this is outside the agent's mandate. The owner must approve it out of band with: termnl approve ${requestId}`,
         );
@@ -742,6 +747,9 @@ export class Termnl {
 
     switch (env.type) {
       case "knock_accept":
+        // Sent by their own agent key, so this is where a contact's relay list is allowed to change.
+        if (env.body.identity !== contact.identity) return false;
+        this.saveContact({ ...contact, pending: undefined, relays: env.body.relays, name: contact.name ?? env.body.name });
         return true;
       case "request": {
         const ok = this.onRequest(contact, env.id, env.body, env.group, env.re);
@@ -848,7 +856,7 @@ export class Termnl {
       body,
       request_hash: this.requestHash(id, contact.identity, this.config.identity, body),
       received_at: now(),
-      authority: withinLimit(body, m.autoAccept) ? "auto" : "needs_owner",
+      authority: autoAcceptable(body, m.autoAccept) ? "auto" : "needs_owner",
       status: "open",
       group,
       // Keep the pointer only when it names something we really exchanged with this contact.

@@ -8,7 +8,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { attachment, download, upload } from "../lib/termnl/files";
 import { requestBody } from "../lib/termnl/protocol";
-import { save } from "../cli/files";
+import { agentPaths, save } from "../cli/files";
+import { mkdirSync, symlinkSync } from "node:fs";
 
 test("attachments are stored encrypted, verified on the way back, and never written outside the downloads folder", async () => {
   const blobs = new Map<string, Buffer>();
@@ -47,9 +48,33 @@ test("attachments are stored encrypted, verified on the way back, and never writ
     stored[0] ^= 1;
     await assert.rejects(download({ ...att, key: "0".repeat(64) }), /no longer available|altered/);
 
+    // A file server may not bounce the request somewhere else: the redirect is refused, never followed.
+    let followed = false;
+    const target = createServer((_, res) => { followed = true; res.end("x"); }).listen(7493);
+    const bouncer = createServer((_, res) => res.writeHead(302, { location: "http://127.0.0.1:7493/admin" }).end()).listen(7492);
+    try {
+      await assert.rejects(download({ ...att, servers: ["http://localhost:7492"] }), /no longer available|altered/);
+      assert.equal(followed, false);
+    } finally { target.close(); bouncer.close(); }
+
     // Pointers to private or non-https servers are refused before any request is made.
     for (const bad of ["https://127.0.0.1", "https://localhost", "http://example.com", "https://files.internal", "https://example.com/path"]) {
       assert.equal(attachment.safeParse({ ...att, servers: [bad] }).success, false, bad);
     }
   } finally { server.close(); }
+});
+
+test("the agent can attach only from folders the owner chose, never the profile's keys", () => {
+  const profile = mkdtempSync(join(tmpdir(), "termnl-agentfiles-")), elsewhere = mkdtempSync(join(tmpdir(), "termnl-elsewhere-"));
+  writeFileSync(join(profile, "identity.key"), "secret"); writeFileSync(join(elsewhere, "notes.txt"), "private");
+  mkdirSync(join(profile, "share")); writeFileSync(join(profile, "share", "ok.txt"), "fine");
+  symlinkSync(join(profile, "identity.key"), join(profile, "share", "link.txt"));
+
+  assert.equal(agentPaths([join(profile, "share", "ok.txt")], profile, []).length, 1);
+  for (const bad of [join(profile, "identity.key"), join(elsewhere, "notes.txt"), join(profile, "share", "link.txt"), join(profile, "share", "..", "identity.key"), join(profile, "share"), join(profile, "share", "missing.txt")]) {
+    assert.throws(() => agentPaths([bad], profile, []), /can only attach/, bad);
+  }
+  // Even if the owner lists the profile folder itself, its own files stay out of reach.
+  assert.throws(() => agentPaths([join(profile, "identity.key")], profile, [profile]), /can only attach/);
+  assert.equal(agentPaths([join(elsewhere, "notes.txt")], profile, [elsewhere]).length, 1);
 });

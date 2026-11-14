@@ -9,7 +9,7 @@ import { npubEncode } from "nostr-tools/nip19";
 import { z } from "zod";
 import { Termnl, type InboxItem, type OutboxItem } from "../lib/termnl/core";
 import type { RequestBody } from "../lib/termnl/protocol";
-import { attach, save } from "./files";
+import { agentPaths, attach, save } from "./files";
 import { CARD_HTML, CARD_META, CARD_MIME, CARD_URI } from "./card";
 import { CardView } from "./card-view";
 import { describe, notify } from "./notify";
@@ -194,14 +194,14 @@ server.registerTool(
       amount: z.number().nonnegative().optional(),
       currency: z.string().length(3).optional(),
       due: z.string().max(40).optional().describe("ISO date the request relates to"),
-      files: z.array(z.string()).max(4).optional().describe("Absolute paths of files to attach, encrypted before upload. Refused unless the owner's mandate has agentMaySendFiles; only attach files the owner named."),
+      files: z.array(z.string()).max(4).optional().describe("Absolute paths of files to attach, encrypted before upload. Refused unless the owner's mandate has agentMaySendFiles, and only files inside the folders the owner chose (agentFileDirs, or the profile's share folder) can be sent; only attach files the owner named."),
     },
   },
   async ({ to, show_recipients, in_reply_to, send_at, only_if_unanswered, kind, subject, details, amount, currency, due, files: paths }) => {
     try {
       if (paths?.length && !mail.mandate().agentMaySendFiles) throw new Error("The agent is not allowed to send files. The owner can send them with `termnl send --file`, or allow it in the mandate.");
       const value = amount !== undefined ? { amount, currency: currency ?? mail.mandate().outbound.currency } : undefined;
-      const body = { kind, subject, details, value, due, attachments: paths?.length ? await attach(paths) : undefined };
+      const body = { kind, subject, details, value, due, attachments: paths?.length ? await attach(agentPaths(paths, mail.store.dir, mail.mandate().agentFileDirs)) : undefined };
       const list = Array.isArray(to) ? to : [to];
       if (send_at) {
         const at = Math.floor(Date.parse(send_at) / 1000);

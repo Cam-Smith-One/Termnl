@@ -3,10 +3,17 @@ import assert from "node:assert/strict"
 import {commandWords,options} from "../lib/termnl/command"
 import {Termnl} from "../lib/termnl/core"
 import {FileStore} from "../cli/store"
-import {decodeInvite,relayList} from "../lib/termnl/protocol"
+import {decodeInvite,relayList,peerRelayList} from "../lib/termnl/protocol"
 import {mkdtempSync,rmSync} from "node:fs"
 import {tmpdir} from "node:os"
 import {join} from "node:path"
+test("relays supplied by another party must be public: no local, internal or literal-IP hosts",()=>{
+  for(const ok of ["wss://relay.primal.net","wss://termnl.app/relay"]) assert.equal(peerRelayList.safeParse([ok]).success,true,ok)
+  for(const bad of ["wss://10.0.0.5:8443/admin","wss://169.254.169.254/","wss://[::1]/","wss://localhost","wss://printer.internal/x","wss://box.local","wss://a.localhost","wss://example.com.","http://example.com"]) assert.equal(peerRelayList.safeParse([bad]).success,false,bad)
+  const was=process.env.TERMNL_TEST
+  try{ delete process.env.TERMNL_TEST; assert.equal(peerRelayList.safeParse(["ws://127.0.0.1:6379/x"]).success,false) } finally { process.env.TERMNL_TEST=was }
+  assert.equal(relayList.safeParse(["ws://127.0.0.1:7447"]).success,true) // the owner's own list may still be local
+})
 test("browser commands parse quoted text without evaluation",()=>{
   const result=options(commandWords('send bob inform "Hello there" --details "Keep $HOME literal"').slice(1))
   assert.deepEqual(result.args,["bob","inform","Hello there"])

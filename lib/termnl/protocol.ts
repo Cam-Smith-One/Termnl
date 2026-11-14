@@ -39,6 +39,20 @@ export const relayList = z.array(z.string().max(200).refine((value) => {
       (url.protocol === "ws:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)))
   } catch { return false }
 }, "Use wss:// relays (ws:// is allowed only on localhost)")).min(1).max(8);
+/**
+ * Relays another party tells us to use for them. Stricter than our own list: no local, internal or
+ * literal-IP hosts, so a contact cannot point this client at services on the owner's machine or network.
+ * ponytail: a public hostname that resolves to a private address is not caught; the request is a blind WebSocket handshake.
+ */
+const loopback = (host: string) => ["localhost", "127.0.0.1", "[::1]"].includes(host);
+export const peerRelayList = z.array(z.string().max(200).refine((value) => {
+  try {
+    const url = new URL(value);
+    if (url.username || url.password || url.hash) return false;
+    if (url.protocol === "wss:") return !loopback(url.hostname) && !/^\[|^\d+\.\d+\.\d+\.\d+$|\.(local|internal|localhost)$|\.$/.test(url.hostname);
+    return url.protocol === "ws:" && loopback(url.hostname) && process.env.TERMNL_TEST === "1";
+  } catch { return false; }
+}, "A contact's relays must be public wss:// addresses")).min(1).max(8);
 // A public relay plus our own, so one being down or dropping messages does not stop delivery.
 export const DEFAULT_RELAYS = ["wss://relay.primal.net", "wss://termnl.app/relay"];
 
@@ -58,7 +72,7 @@ export type RequestBody = z.infer<typeof requestBody>;
 const pairingBody = z.object({
   identity: hex64,
   cert: nostrEvent,
-  relays: relayList,
+  relays: peerRelayList,
   name: z.string().max(80).regex(/^[^\p{Cc}]*$/u, "no control characters").optional(),
 });
 
@@ -130,6 +144,8 @@ export const mandate = z.object({
   agentMaySendFiles: z.boolean().default(false),
   /** Whether the agent may create and accept pairing invites when the owner asks in chat. Off unless the owner turns it on. */
   agentMayPair: z.boolean().default(false),
+  /** Folders the agent may attach files from. Empty means only the profile's own "share" folder. */
+  agentFileDirs: z.array(z.string().max(500)).max(8).default([]),
 });
 export type Mandate = z.infer<typeof mandate>;
 
@@ -140,6 +156,7 @@ export const DEFAULT_MANDATE: Mandate = {
   maxOpenPerContact: 20,
   agentMaySendFiles: false,
   agentMayPair: false,
+  agentFileDirs: [],
 };
 
 /** Deterministic JSON so both parties hash and sign identical bytes. */
@@ -153,6 +170,14 @@ export function canonical(value: unknown): string {
 
 export function sha256hex(text: string): string {
   return bytesToHex(sha256(new TextEncoder().encode(text)));
+}
+
+/**
+ * What the agent may accept by itself: inside the limit and, for a request or an offer, only when the
+ * sender declared the amount. Otherwise leaving the amount out would sidestep the owner's cap.
+ */
+export function autoAcceptable(body: RequestBody, rule: { kinds: string[]; maxAmount: number; currency: string }): boolean {
+  return withinLimit(body, rule) && (body.kind === "inform" || !!body.value);
 }
 
 export function recipientTag(groupId: string, identity: string): string {

@@ -118,7 +118,7 @@ export default function Home() {
 
         <aside className="mt-16 rounded-lg border border-t-warn-line bg-t-warn-bg p-6 text-sm leading-relaxed text-t-warn">
           <h3 className="font-semibold">This is a prototype</h3>
-          <p className="mt-2">Try it, but don&apos;t rely on it for anything that matters yet. It has had no security review. Messages go over public relays that can lose them. There is no forward secrecy or remote signing, a compromised page could read unlocked keys, and the legal weight of a signed commitment is untested.</p>
+          <p className="mt-2">Try it, but don&apos;t rely on it for anything that matters yet. It has had an internal security review but no independent audit. Messages go over public relays that can lose them. There is no forward secrecy or remote signing, a compromised page could read unlocked keys, and the legal weight of a signed commitment is untested.</p>
           <p className="mt-2">Back up your profile and remember your passphrase. There is no account recovery.</p>
         </aside>
       </div>
