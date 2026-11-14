@@ -120,6 +120,15 @@ In chat clients that support MCP Apps (Claude, ChatGPT, VS Code), incoming and s
 messages appear as a rendered card with reply buttons. A button only asks the agent to
 act, so the mandate still applies. Other clients get the same content as Markdown.
 
+### Claude Code panel (experimental)
+
+`mods/termnl-messages` is a Claude Code mod that keeps a Termnl panel beside the chat:
+Inbox and Sent tabs, a row per message, and a reading view with Accept, Decline and
+Suggest a change buttons. It reads the profile's files and runs `termnl sync` every two
+minutes. A button only asks the agent to act, so the mandate still applies. Load it with
+`claude --plugin-dir mods/termnl-messages`, then `/termnl`. Claude Code mods are early
+access and the API may change.
+
 Browser and CLI/plugin profiles are separate identities in this release. They
 can pair with each other; they do not share an unlocked browser identity or an
 existing IDE session. Linking one identity across browser and local plugin is
