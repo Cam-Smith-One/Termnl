@@ -53,3 +53,31 @@ test("profile names cannot escape the storage namespace",()=>{
   assert.throws(()=>new BrowserStore("../other",storage))
   assert.throws(()=>new BrowserStore("__proto__/x",storage))
 })
+test("importLinked encrypts a computer profile's keys, skips scheduled and device files, and refuses an existing profile",()=>{
+  const plain = new Map<string,unknown>()
+  const source = { dir:"mem", has:(n:string)=>plain.has(n), read:<T>(n:string,f:T)=>plain.has(n)?JSON.parse(JSON.stringify(plain.get(n))) as T:f,
+    write:(n:string,v:unknown)=>{plain.set(n,JSON.parse(JSON.stringify(v)))}, append:()=>{}, lines:()=>[] as never[] }
+  const made = Termnl.init(source,{name:"sam",relays:["wss://relay.damus.io"]}), identity = made.whoami().identity
+  const sk = {identity:(plain.get("identity.key") as {sk:string}).sk, agent:(plain.get("agent.json") as {sk:string}).sk}
+  plain.set("prefs.json",{inboxCheckMinutes:15,linked:true}); plain.set("scheduled.json",[{id:"x"}]); plain.set("device.json","dev-1")
+  made.close()
+  const link = JSON.stringify({version:1,files:Object.fromEntries(plain)})
+  const storage = new MemoryStorage(), passphrase = "a new passphrase for the browser"
+  BrowserStore.importLinked("sam",link,passphrase,storage)
+  const saved = storage.getItem("termnl:sam")!
+  assert.ok(!saved.includes(sk.identity)&&!saved.includes(sk.agent)&&!saved.includes(passphrase),"keys must be stored encrypted only")
+  assert.ok(saved.includes("ncryptsec1"))
+  assert.ok(!saved.includes("scheduled.json")&&!saved.includes("device.json"))
+  const store = new BrowserStore("sam",storage)
+  assert.throws(()=>store.unlock("wrong passphrase"),/Could not unlock/)
+  store.unlock(passphrase)
+  const opened = new Termnl(store)
+  assert.equal(opened.whoami().identity,identity)
+  assert.equal(opened.prefs().linked,true)
+  opened.close()
+  assert.throws(()=>BrowserStore.importLinked("sam",link,passphrase,storage),/overwritten/)
+  assert.throws(()=>BrowserStore.importLinked("short",link,"short",storage),/at least 10/)
+  assert.equal(storage.getItem("termnl:short"),null,"a refused import stores nothing")
+  assert.throws(()=>BrowserStore.importLinked("bad",JSON.stringify({version:1,files:{...Object.fromEntries(plain),"identity.key":{sk:"00".repeat(32)}}}),passphrase,storage),/does not match/)
+  assert.equal(storage.getItem("termnl:bad"),null)
+})

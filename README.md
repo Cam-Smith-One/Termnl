@@ -58,6 +58,7 @@ Each person decides what their agent may do on their behalf.
 - Reference: [browser console](#try-it-by-hand-in-the-browser) ·
   [CLI and agent plugin](#local-cli-and-agent-plugin) ·
   [authority and messages](#authority-and-messages) ·
+  [forward secrecy](#forward-secrecy) ·
   [relays](#relays-and-availability) ·
   [attachments](#encrypted-attachments) ·
   [handles](#optional-nip-05-handles) ·
@@ -86,6 +87,7 @@ Each person decides what their agent may do on their behalf.
 | **Relays that look after themselves** | Termnl can test its relays, find working replacements and tell your contacts where to deliver. |
 | **Two computers, one identity** | Link a second computer. What you send, answer, pair and remove on one appears on the other. |
 | **Check who you paired with** | Each pairing has a short safety code both people can read to each other. |
+| **Forward secrecy** | Messages are encrypted to a key that exists for one day and is deleted about a week later, so a key stolen afterwards cannot open them. |
 | **Hear about it straight away** | While your agent is open you get a desktop notification within seconds of a message arriving, without polling. |
 | **An inbox in Claude Code** | A panel beside your chat lists what people have sent you, with reply, forward and new message buttons. |
 | **See it as a card** | Chat apps that support MCP Apps show messages as a card with buttons; terminals get a tidy Markdown list; Claude Code has an inbox panel. |
@@ -147,8 +149,9 @@ service for people who work inside agents. Planned, not yet built:
 - **Team receipts at a glance.** A per-member tally for a message sent to a team.
 - **Hosted plugin.** A remote version for chat apps that cannot run a local plugin, without
   handing over keys (needs remote signing, NIP-46).
-- **Stronger group encryption.** MLS via the Marmot protocol, for forward secrecy and large groups.
-- **One identity everywhere.** Two computers can share an identity today. Next: the browser and a phone.
+- **Stronger group encryption.** MLS via the Marmot protocol, for recovery after a compromise and large groups.
+  The TypeScript MLS libraries are unaudited and marked alpha today, so Termnl uses daily keys for now.
+- **One identity everywhere.** Computers and the browser console can share an identity today. Next: a phone.
 - **Independent security audit** before any production use.
 
 ---
@@ -191,8 +194,13 @@ passphrase. Clearing browser data without a backup loses your profile.
 
 Commands include `help`, `init`, `unlock`, `whoami`, `relays`, `invite`, `pair`,
 `contacts`, `sync`, `inbox`, `approve`, `accept`, `decline`, `counter`, `send`,
-`outbox`, `commitments`, `mandate`, `handle claim|whois`, `rotate`, `backup`, `lock`
-and `reset`. The browser is the **owner** console. Peer text is labelled untrusted
+`outbox`, `commitments`, `mandate`, `handle claim|whois`, `rotate`, `backup`, `lock`,
+`reset`, and from 0.4.0 `search`, `remove`, `unblock`, `blocked`, `relays check|find|heal|auto`,
+`retention`, `export` and `restore-link`.
+
+`restore-link <name>` brings a computer profile into the browser: run `termnl link <file>` on the computer,
+enter a new passphrase in the console, run the command and choose the file. The keys are encrypted with that
+passphrase before anything is saved, and the browser then stays in step with the computer like any linked device. The browser is the **owner** console. Peer text is labelled untrusted
 and rendered as text, never HTML. Sync runs every 30 seconds while unlocked.
 
 ## Local CLI and agent plugin
@@ -367,6 +375,34 @@ Older clients ignore the list. The browser console sends to one contact at a tim
 turn peer text into authority. Agent acceptance re-checks the current mandate
 unless the owner explicitly approved that request.
 
+## Forward secrecy
+
+From 0.4.0, each profile keeps a secret chain that moves forward one step per UTC day and cannot be run
+backwards. Every day has its own decryption key derived from the chain. Your contacts are told the public
+halves two weeks ahead, on every message you send them, and encrypt to the key for the current day. After a
+check in which every one of your relays was reachable, Termnl moves the chain past any day that ended more than
+seven days earlier, and that day's key no longer exists in the profile. Being offline, or having a relay down,
+never deletes a key; it only delays the deletion.
+
+- **What it gives.** A message stored on a relay can no longer be decrypted once the recipient has deleted
+  that day's key, about eight days after it was sent. That holds even if someone later steals the recipient's
+  agent key, identity key or whole profile, or the sender's agent key.
+- **What it does not give.** It does not protect the most recent week, or messages sent after a theft (rotate
+  the agent key, which starts a fresh chain). It does not protect anything sent the old way: to a contact on
+  0.3.x, to a contact you have not heard from in two weeks, or with the feature off. Messages you have received
+  are still kept in plain files in your profile, and an old backup or link file holds old keys, so delete those
+  you do not need. A message that reaches you more than a week late cannot be opened.
+- **How it is built.** The chain is the construction Signal uses for its chain keys (HMAC-SHA256), and the
+  encryption is the same NIP-44 and NIP-59 as before, aimed at the daily key. The recipient tag relays see is
+  unchanged. No new dependency. The combination is ours and has not been independently reviewed; it is in scope
+  for the audit. This is not MLS: there is no recovery after a compromise without a rotation.
+- **Switching it off.** `termnl forward-secrecy off` stops offering daily keys and stops using your contacts'.
+  Keys you have already given out are still honoured until they run out. `termnl whoami` shows the state.
+- **The browser console** holds the chain encrypted to the agent key, which is itself encrypted with your
+  passphrase. Use one tab per profile: two tabs can overwrite each other's copy.
+- **Backups and link files** contain the chain as it was when they were written, so whoever holds one can open
+  messages from about a week before that date onwards, until you rotate the agent key.
+
 ## Relays and availability
 
 New profiles use three relays: **wss://relay.primal.net** and **wss://offchain.pub** (public, run
@@ -467,8 +503,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a map of the code.
 
 - **Prototype.** An internal, AI-assisted security review was done on 14 November 2026 and its findings
   fixed ([docs/SECURITY-REVIEW.md](docs/SECURITY-REVIEW.md)). There has been no independent audit.
-- No forward secrecy: a stolen agent key can decrypt messages sent to it. MLS via
-  the Marmot protocol is planned, not implemented.
+- Forward secrecy is partial ([details](#forward-secrecy)): it covers messages older than about a week, between
+  clients on 0.4.0 or later, and gives no recovery after a compromise without a key rotation. MLS via the Marmot
+  protocol would give more; it is not implemented.
 - Browser keys are only as safe as the page. XSS could read unlocked keys. No
   third-party scripts are loaded on the console. CSP allows inline Next.js
   scripts/styles, which is weaker than a strict policy.
@@ -478,8 +515,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a map of the code.
   expire events. Messages you send are queued and retried for three days; answers, receipts and
   countersignatures are not.
 - Event kinds 4270–4273 are provisional, not registered Nostr kinds.
-- Browser and local plugin profiles are separate for now. Linked computers share one agent key, so
-  losing either one means rotating the key and linking again.
+- Linked devices (computers, and a browser via `restore-link`) share one agent key, so losing any of them
+  means rotating the key and linking again. There is no phone app.
 - Local file storage is not a hardened multi-process database. Relay checks are serialised by a lock,
   but other writes are not: stop the plugin for owner changes and restart it afterwards.
 - Rotation retires the old decryption key; finish pending exchanges before

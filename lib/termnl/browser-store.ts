@@ -9,6 +9,8 @@ import { relayList, mandate } from "./protocol"
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem" | "key" | "length">
 type Snapshot = { version: 1; files: Record<string, unknown> }
 const secretFiles = new Set(["identity.key", "agent.json"])
+// What `termnl link` writes, minus the keys (handled separately), scheduled.json (stays on the device that queued it) and device.json.
+const linkFiles = ["config.json", "mandate.json", "contacts.json", "inbox.json", "outbox.json", "commitments.json", "invites.json", "seen.json", "teams.json", "prefs.json", "blocked.json", "inboxkeys.json"]
 function validateCiphertext(value: string) {
   try {
     if (typeof value !== "string" || !value.startsWith("ncryptsec1") || value.length > 500) throw new Error()
@@ -61,6 +63,37 @@ export class BrowserStore implements Store {
     if (!/^[0-9a-f]{64}$/.test(config?.identity)) throw new Error("Invalid backup identity")
     relayList.parse(config.relays); mandate.parse(snapshot.files["mandate.json"])
     storage.setItem(key, JSON.stringify(snapshot))
+  }
+  /** Make a profile from the file `termnl link` writes (plaintext keys). Both keys are encrypted under the passphrase before anything is stored. */
+  static importLinked(name: string, serialized: string, passphrase: string, storage: StorageLike = localStorage) {
+    const key = `termnl:${profileName(name)}`
+    if (storage.getItem(key)) throw new Error("Choose a new local name; an existing profile will not be overwritten")
+    if (serialized.length > 5 * 1024 * 1024) throw new Error("Link file is too large")
+    let snapshot: Snapshot
+    try { snapshot = JSON.parse(serialized) } catch { throw new Error("Link file is not valid JSON") }
+    const files = snapshot?.files as Record<string, unknown> | undefined
+    if (snapshot?.version !== 1 || !files || typeof files !== "object") throw new Error("Unsupported link file")
+    const secret = (file: string) => {
+      const sk = (files[file] as { sk?: unknown } | undefined)?.sk
+      if (typeof sk !== "string" || !/^[0-9a-f]{64}$/.test(sk)) throw new Error("This is not a link file made by termnl link")
+      return hexToBytes(sk)
+    }
+    const identitySk = secret("identity.key"), agentSk = secret("agent.json")
+    try {
+      const config = files["config.json"] as { identity: string; relays: string[] }
+      let matches = false
+      try { matches = getPublicKey(identitySk) === config?.identity } catch { /* not a valid key */ }
+      if (!matches) throw new Error("The identity key does not match this profile")
+      if (!certValid((files["agent.json"] as { cert: Parameters<typeof certValid>[0] }).cert, config.identity, getPublicKey(agentSk), 0)) throw new Error("Invalid agent certificate")
+      relayList.parse(config.relays); mandate.parse(files["mandate.json"])
+    } finally { identitySk.fill(0); agentSk.fill(0) }
+    const store = new BrowserStore(name, storage)
+    store.beginSetup(passphrase)
+    try {
+      store.write("identity.key", files["identity.key"], true)
+      store.write("agent.json", files["agent.json"], true)
+      for (const file of linkFiles) if (files[file] != null) store.write(file, files[file])
+    } catch (error) { store.reset(); throw error } finally { store.finishSetup(); store.lock() }
   }
   beginSetup(password: string) {
     if (this.has("config.json")) throw new Error("Profile already exists; use unlock")

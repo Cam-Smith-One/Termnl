@@ -8,7 +8,7 @@ import { hexToBytes } from "nostr-tools/utils"
 import { npubEncode } from "nostr-tools/nip19"
 import { TerminalInput } from "@/components/terminal-input"
 import { Termnl, type InboxItem } from "@/lib/termnl/core"
-import { BrowserStore } from "@/lib/termnl/browser-store"
+import { BrowserStore, profileName } from "@/lib/termnl/browser-store"
 import { DEFAULT_RELAYS, type RequestBody } from "@/lib/termnl/protocol"
 import { handlePayload, handleTemplate, handleDifficulty } from "@/lib/termnl/handles"
 import { commandWords, options } from "@/lib/termnl/command"
@@ -22,23 +22,32 @@ help                         show commands
 init <name>                  create a profile (or use the form)
 unlock <name>                unlock a profile (or use the form)
 whoami                       public identity, agent key, mandate
-relays [wss://... ...]        show or replace relays (set before init, too)
+relays [wss://... ...]        show relays, or replace them and tell your contacts (before init: just set them)
+relays check | find | heal    test your relays; list working ones you could add; replace failing ones
+relays auto on|off           replace a failing relay automatically, and tell your contacts
 invite [--minutes 60]        one-time private pairing link
 pair <invite-or-link>         accept a pairing link as the owner
-contacts                     paired identities (names are self-declared)
+contacts                     paired identities with safety codes (names are self-declared)
+remove <contact> [--block]    stop hearing from a contact; --block also refuses new pairings with them
+unblock <npub>               allow pairing with someone you blocked
+blocked                      list the people you blocked
+search <text>                find messages by subject, details, note or contact name
+retention <days|off>          remove answered messages from this device after that many days
+export <contact>              download everything exchanged with one contact, and its signed agreements
 sync                         fetch encrypted requests/replies
 inbox [all] | outbox         requests waiting for you (or all) | requests you sent
 approve <request-id>          owner approval for an out-of-mandate request
 accept <request-id>           sign acceptance (approve first if required)
 decline <request-id> [note]   decline
 counter <request-id> <note>   propose a change
-send <contact> <request|offer|inform> "subject" [--details "..."] [--amount n] [--currency AUD] [--due date]
+send <contact> <request|offer|inform> "subject" [--details "..."] [--amount n] [--currency AUD] [--due date] [--expires <7d|ISO time>]
 commitments                  signed terms and countersignatures
 mandate [JSON]               show or replace the owner's mandate
 handle whois <name>           optional NIP-05 lookup
 handle claim <name>           identity-signed claim; re-enter passphrase
 rotate [--days 30]            rotate agent key; re-enter passphrase
 backup                       download profile with NIP-49 encrypted keys
+restore-link <name>          use a computer profile here: new passphrase, then choose the file from "termnl link"
 lock                         close relays and discard session keys
 reset                        delete this browser profile (confirmation required)
 
@@ -50,6 +59,17 @@ const KIND_LABEL = { request: "Request", offer: "Offer", inform: "For your infor
 const SENT_STATUS = { open: ["Waiting for a reply", ""], declined: ["Declined", "warn"], countered: ["They suggested a change", "warn"], committed: ["Agreed and signed", "good"] } as const
 const when = (seconds: number) => new Date(seconds * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })
 const primary = "btn !px-4 !py-1.5 text-sm"
+// Delivery and removal notes for an inbox or sent item.
+const notes = (item: { keep_until?: number; unsent?: "queued" | "failed" }) => [
+  item.unsent === "queued" && "Not sent yet. Termnl keeps trying.",
+  item.unsent === "failed" && "Could not be delivered.",
+  item.keep_until && `Removed from both sides ${when(item.keep_until)}`,
+].filter(Boolean) as string[]
+const Notes = ({ item }: { item: Parameters<typeof notes>[0] }) => <>{notes(item).map(note => <p key={note} className="mt-2 text-xs text-t-muted">{note}</p>)}</>
+const saveFile = (name: string, content: string) => {
+  const url = URL.createObjectURL(new Blob([content], { type: "application/json" }))
+  const link = document.createElement("a"); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
 
 // Everything a card shows about the other party (name, subject, details, notes) is their text: rendered as plain text only.
 const Avatar = ({ name, small }: { name?: string; small?: boolean }) => <span aria-hidden className={`flex shrink-0 items-center justify-center rounded-full bg-t-tint font-semibold text-t-accent ${small ? "h-6 w-6 text-xs" : "h-10 w-10 text-sm"}`}>{(name?.trim()[0] ?? "?").toUpperCase()}</span>
@@ -115,6 +135,7 @@ export default function ConsolePage() {
   const [hasInvite, setHasInvite] = useState(false)
   const [notice, setNotice] = useState("")
   const [draft, setDraft] = useState<typeof EMPTY | null>(null)
+  const [linkName, setLinkName] = useState("")
   const [pairLink, setPairLink] = useState("")
   const [theirLink, setTheirLink] = useState("")
   const [tab, setTab] = useState<(typeof TABS)[number][0]>("inbox")
@@ -129,6 +150,7 @@ export default function ConsolePage() {
   const session = useRef<Session | null>(null)
   const relays = useRef([...DEFAULT_RELAYS])
   const pendingInvite = useRef("")
+  const linkPass = useRef("")
   const draftFiles = useRef<File[]>([])
   const processing = useRef(false)
   const counter = useRef(0)
@@ -201,6 +223,13 @@ export default function ConsolePage() {
         if (urls.length) { const { relayList } = await import("@/lib/termnl/protocol"); relays.current = relayList.parse(urls) }
         write(relays.current); return
       }
+      if (cmd === "restore-link") {
+        const name = profileName(commandWords(line)[1] || "")
+        if (BrowserStore.names().includes(name)) throw new Error(`A profile called "${name}" already exists here. Choose a new name.`)
+        if (passphrase.length < 10) throw new Error("Enter a new passphrase of at least 10 characters in the passphrase field, then run the command again.")
+        linkPass.current = passphrase; setLinkName(name)
+        write("Now choose the file made by termnl link. Your keys are encrypted with this passphrase before they are saved here.", "status"); return
+      }
       if (cmd === "handle" && commandWords(line)[1] === "whois") {
         const name = (commandWords(line)[2] || "").split("@")[0]
         const response = await fetch(`/.well-known/nostr.json?name=${encodeURIComponent(name)}`, { cache: "no-store" })
@@ -211,7 +240,7 @@ export default function ConsolePage() {
       if (!current) throw new Error("Create or unlock a profile first, using the form above.")
       const { mail, store } = current
       if (cmd === "mandate") { const json = line.trim().slice(cmd.length).trim(); write(json ? mail.setMandate(JSON.parse(json)) : mail.mandate()); return }
-      const { args, flags } = options(commandWords(line).slice(1))
+      const { args, flags } = options(commandWords(line).slice(1), ["block"])
       // Names, subjects, details and notes come from the other party: always written with kind "peer".
       const who = (identity: string) => `"${mail.contacts().find(contact => contact.identity === identity)?.name ?? "(no name)"}"`
       const terms = (body: RequestBody) => [`Subject: ${body.subject}`, body.details && `Details: ${body.details}`, body.value && `Value: ${body.value.amount} ${body.value.currency}`, body.due && `Due: ${body.due}`].filter(Boolean).join("\n")
@@ -226,11 +255,22 @@ export default function ConsolePage() {
         return result
       }
       const showInbox = (item: InboxItem) => write(
-        `${item.body.kind.toUpperCase()} from ${who(item.from)} · ${when(item.received_at)} · ${item.status}\n${terms(item.body)}${item.status === "open" && item.authority === "needs_owner" ? "\nThis is outside your agent's limits. Approve it before it can be accepted." : ""}`,
+        `${item.body.kind.toUpperCase()} from ${who(item.from)} · ${when(item.received_at)} · ${item.status}\n${terms(item.body)}${item.status === "open" && item.authority === "needs_owner" ? "\nThis is outside your agent's limits. Approve it before it can be accepted." : ""}${notes(item).map(note => `\n${note}`).join("")}`,
         "peer", { actions: item.status !== "open" ? [] : [item.authority === "needs_owner" ? ["approve", `approve ${item.id}`] : ["accept", `accept ${item.id}`], ["decline", `decline ${item.id}`], ["counter", `counter ${item.id} `]] })
       switch (cmd) {
         case "whoami": write(mail.whoami()); break
-        case "relays": write(args.length ? mail.setRelays(args) : mail.whoami().relays); break
+        case "relays": {
+          const show = (list: { url: string; ok: boolean; ms?: number; error?: string }[]) => list.map(probe => `${probe.ok ? "ok  " : "FAIL"} ${probe.url}${probe.ok ? ` (${probe.ms} ms)` : ` - ${probe.error}`}`).join("\n") || "None found"
+          if (!args.length) write(mail.whoami().relays)
+          else if (args[0] === "check") write(show(await mail.checkRelays()))
+          else if (args[0] === "find") write(show(await mail.findRelays()))
+          else if (args[0] === "heal") write(await mail.healRelays())
+          else if (args[0] === "auto") {
+            if (args[1] === "on" || args[1] === "off") mail.setPrefs({ autoRelays: args[1] === "on" })
+            write(`Automatic relay replacement is ${mail.prefs().autoRelays ? "on: a relay that stops working is replaced, at most once a day, and your contacts are told" : "off"}`, "status")
+          } else write(await mail.changeRelays(args))
+          break
+        }
         case "invite": {
           const minutes = Number(flags.minutes ?? 60), link = `https://termnl.app/pair#${mail.createInvite(minutes)}`
           write(`Send this link to the person you want to pair with. It works once and expires in ${minutes} minutes.\nKeep it private: anyone who opens it first is paired with you.\n\n${link}`, "local", { copy: link }); setPairLink(link); setDraft(null); break
@@ -242,7 +282,7 @@ export default function ConsolePage() {
         }
         case "contacts": {
           if (!mail.contacts().length) { write("No contacts yet. Use Pair with someone to get a pairing link.", "status"); break }
-          for (const contact of mail.contacts()) write(`${who(contact.identity)} · ${contact.pending ? "waiting for them to confirm" : `paired ${when(contact.paired_at)}`}\nThe name is what they chose; it is not verified.\nID: ${npubEncode(contact.identity)}`, "peer", { actions: [["send a request", `compose ${npubEncode(contact.identity)}`]] })
+          for (const contact of mail.contacts()) write(`${who(contact.identity)} · ${contact.pending ? "waiting for them to confirm" : `paired ${when(contact.paired_at)}`}\nThe name is what they chose; it is not verified.\nID: ${npubEncode(contact.identity)}\nSafety code: ${mail.safetyCode(contact.identity)} (read it to them over a call; it should match)`, "peer", { actions: [["send a request", `compose ${npubEncode(contact.identity)}`]] })
           break
         }
         case "sync": { const result = await sync(); if (!auto || result.processed || result.dropped) write(`Checked for new messages: ${result.processed} new${result.dropped ? `, ${result.dropped} ignored` : ""}.${result.capped ? "\nYour relay returned the most this check will fetch. If someone is flooding your address, real messages may be delayed; rotating your agent key gives you a fresh address." : ""}`, "status"); break }
@@ -258,7 +298,7 @@ export default function ConsolePage() {
           await sync()
           if (!mail.outbox().length) { write("You haven't sent anything yet. Open Contacts to send one.", "status"); break }
           const status = { open: "waiting for a reply", declined: "declined", countered: "they proposed a change", committed: "agreed and signed by both sides" }
-          for (const item of mail.outbox()) write(`${item.body.kind.toUpperCase()} to ${who(item.to)} · ${when(item.sent_at)} · ${status[item.status]}\n${terms(item.body)}${item.note ? `\nTheir note: ${item.note}` : ""}`, "peer")
+          for (const item of mail.outbox()) write(`${item.body.kind.toUpperCase()} to ${who(item.to)} · ${when(item.sent_at)} · ${status[item.status]}\n${terms(item.body)}${item.note ? `\nTheir note: ${item.note}` : ""}${notes(item).map(note => `\n${note}`).join("")}`, "peer")
           break
         }
         case "approve": { const item = mail.approve(args[0] || ""); write("Approved. Nothing is signed until you accept it.", "status"); showInbox(item); break }
@@ -273,8 +313,41 @@ export default function ConsolePage() {
           const files = draftFiles.current
           if (files.length > 4 || files.some(file => !file.size || file.size > MAX_FILE_BYTES)) throw new Error(`Attach up to 4 files of at most ${MAX_FILE_BYTES / 1024 / 1024} MB each`)
           const attachments = files.length ? await Promise.all(files.map(async file => upload({ name: file.name, type: file.type, bytes: new Uint8Array(await file.arrayBuffer()) }))) : undefined
-          const item = await mail.sendRequest(to, { kind: kind as "request" | "offer" | "inform", subject, details: flags.details, value, due: flags.due, attachments }, { owner: true })
-          draftFiles.current = []; setDraft(null); write(`Sent to ${who(item.to)}. Their reply will show under Sent.`, "peer"); break
+          const days = /^(\d+)d$/.exec(flags.expires ?? "")?.[1]
+          const keepUntil = flags.expires ? Math.floor(days ? Date.now() / 1000 + Number(days) * 86400 : Date.parse(flags.expires) / 1000) : undefined
+          if (flags.expires && !Number.isFinite(keepUntil)) throw new Error("--expires takes a number of days (7d) or an ISO time")
+          const item = await mail.sendRequest(to, { kind: kind as "request" | "offer" | "inform", subject, details: flags.details, value, due: flags.due, attachments }, { owner: true, keepUntil })
+          draftFiles.current = []; setDraft(null); write(item.unsent === "queued" ? `Not sent yet: no relay could be reached. Termnl keeps trying for three days. It will show under Sent.` : `Sent to ${who(item.to)}. Their reply will show under Sent.`, "peer"); break
+        }
+        case "search": {
+          if (!args.length) throw new Error("search <text>")
+          const found = mail.search(args.join(" "))
+          if (!found.length) { write("Nothing matches that.", "status"); break }
+          for (const { dir, at, item } of found) write(`${item.body.kind.toUpperCase()} ${"from" in item ? `from ${who(item.from)}` : `to ${who(item.to)}`} · ${when(at)}\n${terms(item.body)}${"note" in item && item.note ? `\nTheir note: ${item.note}` : ""}${notes(item).map(note => `\n${note}`).join("")}`, "peer")
+          break
+        }
+        case "remove": {
+          if (!args[0]) throw new Error("remove <contact> [--block]")
+          const contact = mail.removeContact(args[0], { block: !!flags.block })
+          write(`${flags.block ? "Blocked" : "Removed"} "${contact.name ?? npubEncode(contact.identity)}". Their messages are now ignored; they have not been told. Your history with them is kept.`, "peer"); break
+        }
+        case "unblock": { if (!args[0]) throw new Error("unblock <npub>"); mail.unblock(args[0]); write("Unblocked. Pair again to hear from them.", "status"); break }
+        case "blocked": { const list = mail.blocked(); write(list.length ? list.map(id => npubEncode(id)).join("\n") : "No one is blocked.", "status"); break }
+        case "retention": {
+          if (args[0]) {
+            const days = args[0] === "off" ? undefined : Number(args[0])
+            if (days !== undefined && !(days >= 1 && days <= 3650)) throw new Error("retention <days|off>")
+            mail.setPrefs({ keepDays: days })
+          }
+          const keep = mail.prefs().keepDays
+          write(keep ? `Answered messages are removed from this device after ${keep} days. Signed agreements are kept.` : "Messages are kept until you remove the profile.", "status"); break
+        }
+        case "export": {
+          if (!args[0]) throw new Error("export <contact>")
+          const contact = mail.resolveContact(args[0])
+          const record = { exported_at: new Date().toISOString(), owner: mail.whoami().identity, contact: { name: contact.name, npub: npubEncode(contact.identity) }, messages: mail.conversation(args[0]), agreements: mail.commitments().filter(item => item.with === contact.identity) }
+          saveFile(`termnl-export-${npubEncode(contact.identity).slice(0, 16)}.json`, JSON.stringify(record, null, 2))
+          write(`Downloaded ${record.messages.length} messages and ${record.agreements.length} signed agreements with "${contact.name ?? "this contact"}".`, "peer"); break
         }
         case "commitments": {
           await sync()
@@ -297,8 +370,7 @@ export default function ConsolePage() {
           write(result); break
         }
         case "backup": {
-          const blob = new Blob([store.backup()], { type: "application/json" }); const url = URL.createObjectURL(blob)
-          const link = document.createElement("a"); link.href = url; link.download = `termnl-${store.name}-backup.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
+          saveFile(`termnl-${store.name}-backup.json`, store.backup())
           write("Downloaded a profile backup with encrypted keys. Keep it and your passphrase separately.", "status"); break
         }
         case "lock": lock(); write("Locked. Session keys discarded and relay connections closed.", "status"); break
@@ -327,7 +399,7 @@ export default function ConsolePage() {
   const openItems = inboxItems.filter(item => item.status === "open"), answered = inboxItems.filter(item => item.status !== "open")
   const termsOf = (content: string): RequestBody => { try { return JSON.parse(content).terms } catch { return { kind: "inform", subject: "(unreadable terms)" } } }
   const last = entries[entries.length - 1]
-  const needsPassphrase = /^\s*(rotate|handle\s+claim)\b/.test(input)
+  const needsPassphrase = /^\s*(rotate|restore-link|handle\s+claim)\b/.test(input)
   const passphraseField = (label: string, create = false) => <label className="block text-xs text-t-body">{label}
     <TerminalInput aria-label="Profile passphrase" type="password" autoComplete={create ? "new-password" : "current-password"} required minLength={create ? 10 : undefined} value={password} onChange={event => setPassword(event.target.value)} disabled={busy} placeholder={create ? "At least 10 characters" : ""} className="mt-1" /></label>
 
@@ -340,6 +412,19 @@ export default function ConsolePage() {
           {active
             ? <div className="flex flex-wrap gap-2"><button disabled={busy} className={button} onClick={() => void execute(`pair ${pendingInvite.current}`)}>Accept and pair</button><button className="px-2 text-xs text-t-muted underline" onClick={() => { pendingInvite.current = ""; setHasInvite(false) }}>ignore</button></div>
             : <p className="text-t-body">{creating ? "Create a profile" : "Unlock your profile"} below, then you can accept it.</p>}
+        </div>}
+
+        {linkName && <div className="mx-auto max-w-md space-y-3 rounded-lg border border-t-accent p-4 text-sm text-t-ink">
+          <label className="block">Choose the file made by termnl link, for the profile &ldquo;{linkName}&rdquo;<input aria-label="Computer profile link file" className="mt-2 block w-full" type="file" accept="application/json,.json" onChange={async event => {
+            const file = event.target.files?.[0]; event.target.value = ""; if (!file) return
+            try {
+              if (file.size > 5 * 1024 * 1024) throw new Error("Link file is too large")
+              BrowserStore.importLinked(linkName, await file.text(), linkPass.current)
+              setProfiles(BrowserStore.names()); setLockedName(linkName); setAdding(false); setNotice(""); linkPass.current = ""; setLinkName("")
+              write(`Profile "${linkName}" is ready. Unlock it with the new passphrase. Delete the link file now: it holds your keys in plain text.`, "status")
+            } catch (error) { write(error instanceof Error ? error.message : "Link failed", "error") }
+          }} /></label>
+          <button type="button" className="text-xs text-t-muted underline" onClick={() => { linkPass.current = ""; setLinkName("") }}>Cancel</button>
         </div>}
 
         {ready && !active && <form className="mx-auto max-w-md space-y-4 rounded-lg border border-t-line-strong p-4 sm:p-6" onSubmit={event => { event.preventDefault(); void execute(creating ? `init ${newName}` : `unlock ${lockedName}`) }}>
@@ -411,7 +496,7 @@ export default function ConsolePage() {
           {tab === "inbox" && <>
             {!openItems.length && <Empty>Nothing is waiting for you. New messages arrive here automatically while this page is open.</Empty>}
             {[...openItems, ...(showAnswered ? answered : [])].map(item => <Card key={item.id} name={nameOf(item.from)} meta={when(item.received_at)} chips={<><Chip>{KIND_LABEL[item.body.kind]}</Chip>{item.status !== "open" && <Chip tone={item.status === "accepted" ? "good" : "warn"}>{item.status === "countered" ? "You suggested a change" : `You ${item.status}`}</Chip>}</>}>
-              <Terms body={item.body} />
+              <Terms body={item.body} /><Notes item={item} />
               {item.status === "open" && <>
                 {item.authority === "needs_owner" && <p className="mt-3 rounded-md border border-t-warn-line bg-t-warn-bg px-3 py-2 text-xs text-t-warn">This is outside the limits you set for your agent. Approve it first if you want to accept it.</p>}
                 <div className="mt-3 flex flex-wrap gap-2">
@@ -430,7 +515,7 @@ export default function ConsolePage() {
           </>}
 
           {tab === "sent" && (mail.outbox().length ? mail.outbox().slice().reverse().map(item => <Card key={item.id} name={nameOf(item.to)} meta={`Sent ${when(item.sent_at)}`} chips={<><Chip>{KIND_LABEL[item.body.kind]}</Chip><Chip tone={SENT_STATUS[item.status][1]}>{SENT_STATUS[item.status][0]}</Chip></>}>
-            <Terms body={item.body} />
+            <Terms body={item.body} /><Notes item={item} />
             {item.note && <p className="mt-3 whitespace-pre-wrap break-words border-l-2 border-t-line-strong pl-3 text-sm text-t-body"><span className="block text-xs text-t-muted">Their note</span>{item.note}</p>}
           </Card>) : <Empty>You haven&apos;t sent anything yet. Use New message to send your first one.</Empty>)}
 
@@ -440,6 +525,7 @@ export default function ConsolePage() {
             <div className="grid gap-3 sm:grid-cols-2">{contacts.filter(matches).map(contact => { const id = npubEncode(contact.identity); return <Card key={id} name={contact.name} meta="" chips={contact.pending ? <Chip tone="warn">Waiting for them to confirm</Chip> : <Chip tone="good">Paired</Chip>}>
               <p className="mt-1 truncate font-mono text-xs text-t-muted" title={id}>{id.slice(0, 14)}…{id.slice(-6)}</p>
               {!contact.pending && <p className="text-xs text-t-muted">Since {when(contact.paired_at)}</p>}
+              <p className="text-xs text-t-muted">Safety code {mail.safetyCode(contact.identity)}. Read it to them over a call; it should match.</p>
               <div className="mt-3 flex flex-wrap gap-2"><button disabled={busy} className="btn-sm" onClick={() => compose(id)}>Message</button><button className="btn-sm" onClick={event => { const target = event.currentTarget; void navigator.clipboard.writeText(id).then(() => { target.textContent = "Copied" }) }}>Copy ID</button></div>
             </Card> })}</div>
           </>}
@@ -458,7 +544,7 @@ export default function ConsolePage() {
           </div>)}<div ref={outputEnd} />
         </div>
         <form onSubmit={submit} className="mt-3 space-y-3">
-          {active && needsPassphrase && passphraseField("PASSPHRASE / needed again for this command")}
+          {needsPassphrase && (/^\s*restore-link\b/.test(input) ? passphraseField("NEW PASSPHRASE / protects the keys in this browser", true) : active && passphraseField("PASSPHRASE / needed again for this command"))}
           <div className="flex gap-2"><span className="self-center text-t-muted">{">"}</span><TerminalInput ref={commandInput} aria-label="Terminal command" value={input} onChange={event => setInput(event.target.value)} placeholder={active ? "type a command, or help" : "help"} disabled={!ready || busy} autoComplete="off" spellCheck={false} /><button disabled={!ready || busy || !input.trim()} className="btn-sm">{busy ? "Working" : "Run"}</button></div>
         </form>
         </details>

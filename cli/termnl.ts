@@ -41,6 +41,7 @@ const HELP = `termnl <command>
   relays check | find | heal | auto <on|off>               test your relays; list working ones you could add; replace failing ones; do that automatically
   remove <contact> [--block] | unblock <npub> | blocked    stop hearing from a contact; --block also refuses new pairings with them
   export <contact> <file>                                  write everything exchanged with one contact, and its signed agreements, to a file
+  forward-secrecy [on|off]                                 daily inbox keys, deleted about a week later (on by default)
   search <text>                                            find messages by subject, details, note or contact name
   retention <days|off>                                     remove answered messages from this device after that many days
   handle whois <name> | handle claim <name>                  optional termnl.app handle registry
@@ -79,7 +80,7 @@ const { values, positionals } = parseArgs({
   },
 });
 const [cmd, ...args] = positionals;
-const PROFILE_FILES = ["config.json","identity.key","agent.json","mandate.json","contacts.json","inbox.json","outbox.json","commitments.json","invites.json","seen.json","teams.json","prefs.json","scheduled.json","blocked.json"];
+const PROFILE_FILES = ["config.json","identity.key","agent.json","mandate.json","contacts.json","inbox.json","outbox.json","commitments.json","invites.json","seen.json","teams.json","prefs.json","scheduled.json","blocked.json","inboxkeys.json"];
 const out = (v: unknown) => console.log(typeof v === "string" ? v : JSON.stringify(v, null, 2));
 
 async function main(): Promise<void> {
@@ -150,6 +151,9 @@ async function main(): Promise<void> {
       case "unblock": mail.unblock(args[0] ?? ""); return out("Unblocked. Pair again to hear from them.");
       case "blocked": return out(mail.blocked().map((b) => npubEncode(b)));
       case "search": return out(mail.search(args.join(" ")));
+      case "forward-secrecy":
+        if (args[0] === "on" || args[0] === "off") mail.setPrefs({ forwardSecrecy: args[0] === "on" });
+        return out(`Forward secrecy is ${mail.whoami().forward_secrecy}`);
       case "export": {
         if (!args[0] || !args[1]) throw new Error("export <contact> <new-file.json>");
         const c = mail.resolveContact(args[0]);

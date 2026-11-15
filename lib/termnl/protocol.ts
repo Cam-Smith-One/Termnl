@@ -99,6 +99,9 @@ export const groupInfo = z.object({
 });
 export type GroupInfo = z.infer<typeof groupInfo>;
 
+export const inboxKeys = z.object({ from: z.number().int().nonnegative(), keys: z.array(hex64).min(1).max(15) });
+export type InboxKeys = z.infer<typeof inboxKeys>;
+
 export const envelope = z.discriminatedUnion("type", [
   z.object({ type: z.literal("knock"), body: pairingBody.extend({ code: z.string().min(16).max(64) }) }),
   z.object({ type: z.literal("knock_accept"), body: pairingBody }),
@@ -138,6 +141,8 @@ export const envelope = z.discriminatedUnion("type", [
     re: z.string().uuid().optional(),
     /** The sender asks that the message be removed from both sides at this time. A request: older clients ignore it. */
     keep_until: z.number().int().optional(),
+    /** The sender's daily inbox keys, one per UTC day starting at `from` (a day number). See "Forward secrecy" in the README. */
+    inbox: inboxKeys.optional(),
   }),
 );
 export type Envelope = z.infer<typeof envelope>;

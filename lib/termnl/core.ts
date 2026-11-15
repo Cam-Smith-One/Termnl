@@ -1,8 +1,10 @@
 import { finalizeEvent, generateSecretKey, getPublicKey, verifyEvent } from "nostr-tools/pure";
 import { SimplePool } from "nostr-tools/pool";
-import { bytesToHex, hexToBytes } from "nostr-tools/utils";
+import { bytesToHex, hexToBytes, normalizeURL } from "nostr-tools/utils";
 import * as nip44 from "nostr-tools/nip44";
-import { wrapEvent } from "nostr-tools/nip59";
+import { createRumor, createSeal, wrapEvent } from "nostr-tools/nip59";
+import { hmac } from "@noble/hashes/hmac.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import { decode as nipDecode, npubEncode } from "nostr-tools/nip19";
 import {
   DEFAULT_MANDATE,
@@ -23,6 +25,7 @@ import {
   type Mandate,
   type RequestBody,
   type GroupInfo,
+  type InboxKeys,
   MAX_RECIPIENTS,
   recipientTag,
   type SignedEvent,
@@ -35,6 +38,35 @@ const fromHex = hexToBytes;
 const randomUUID = () => globalThis.crypto.randomUUID();
 const DAY = 86400;
 
+// ---------- forward secrecy: daily inbox keys ----------
+// Each profile holds a secret "chain" that moves forward one step per UTC day and cannot be run backwards.
+// Every day has its own decryption key derived from the chain; contacts are told the public halves two weeks
+// ahead and encrypt to today's. Once the chain has moved past a day, that day's key no longer exists anywhere,
+// so messages from it cannot be decrypted even by someone who later steals the whole profile.
+// This is the same construction as a Signal chain key: next = HMAC(chain, 2), key = HMAC(chain, 1).
+const today = () => Math.floor(now() / DAY);
+/** How many days of keys contacts are given in advance, and how long a day's key is kept after the day ends. */
+const KEYS_AHEAD = 14, KEEP_KEY_DAYS = 7;
+interface Chain {
+  epoch: number;
+  chain: string;
+}
+const step = (chain: Uint8Array) => hmac(sha256, chain, Uint8Array.of(2));
+function dayKey(chain: Uint8Array): Uint8Array {
+  // A hash is a valid private key except with negligible probability; the counter covers that case.
+  for (let i = 0; ; i++) {
+    const sk = hmac(sha256, chain, Uint8Array.of(1, i));
+    try { getPublicKey(sk); return sk; } catch { /* try the next counter */ }
+  }
+}
+/** The private keys a chain yields for days first..last, oldest first. */
+function dayKeys(c: Chain, first: number, last: number): { day: number; sk: Uint8Array }[] {
+  const out: { day: number; sk: Uint8Array }[] = [];
+  let chain = fromHex(c.chain);
+  for (let day = c.epoch; day <= last; day++, chain = step(chain)) if (day >= first) out.push({ day, sk: dayKey(chain) });
+  return out;
+}
+
 export interface Contact {
   identity: string;
   agent: string;
@@ -45,6 +77,8 @@ export interface Contact {
   paired_at: number;
   /** We accepted their invite but they have not yet proved they hold the key. Nothing is sent until they do. */
   pending?: boolean;
+  /** Their daily inbox keys, as last told to us by their own agent key. */
+  inbox?: InboxKeys;
 }
 
 export interface InboxItem {
@@ -98,6 +132,8 @@ export interface Prefs {
   lastRelayCheck?: number;
   /** This profile also runs on another device: tell the others what this one sends, answers and pairs. */
   linked?: boolean;
+  /** False switches daily inbox keys off: this profile neither offers them nor uses a contact's. */
+  forwardSecrecy?: boolean;
 }
 
 /** A message queued for later. Always sent as the agent, so the mandate is checked again when it falls due. */
@@ -184,6 +220,8 @@ interface Seen {
 export class MandateError extends Error {}
 /** Every one of the contact's relays refused or was unreachable. */
 class NoRelayError extends Error {}
+/** None of the keys held opens a gift wrap. It is tried again later, in case the key was only briefly unavailable. */
+class NoKeyError extends Error {}
 const RETRY_DAYS = 3;
 
 function tag(ev: { tags: string[][] }, name: string): string | undefined {
@@ -261,6 +299,9 @@ export class Termnl {
   async rotateAgentKey(days = 30): Promise<{ notified: number }> {
     this.agent = Termnl.issueAgentKey(this.store, days);
     this.sk = fromHex(this.agent.sk);
+    // A rotation may follow a theft, so the daily-key chain starts again from fresh randomness: chain() sees that
+    // the stored one belongs to the old key and replaces it. Nothing is lost by that, because messages addressed
+    // to the old agent key are no longer fetched at all.
     let notified = 0;
     for (const c of this.contacts()) {
       try {
@@ -333,6 +374,7 @@ export class Termnl {
       agent_key: npubEncode(this.agentPub),
       agent_key_expires: new Date(exp * 1000).toISOString(),
       relays: this.config.relays,
+      forward_secrecy: this.inboxList() ? "on: messages to you use a key that is deleted about a week later" : "off",
       mandate: this.mandate(),
     };
   }
@@ -428,6 +470,82 @@ export class Termnl {
     return String(n).padStart(12, "0").replace(/(\d{4})(?=\d)/g, "$1 ");
   }
 
+  // ---------- forward secrecy ----------
+
+  /** Another process has rotated the agent key since this one started. It must not write key material. */
+  private stale(): boolean {
+    return this.store.read<AgentKey>("agent.json", this.agent).sk !== this.agent.sk;
+  }
+  /**
+   * This profile's chain. The file names the agent key it belongs to and is encrypted to that key.
+   * A chain is only ever created when there is none for the current key; one that cannot be read is left alone.
+   */
+  private chain(): Chain | undefined {
+    const read = (): { chain?: Chain; mine: boolean } => {
+      const saved = this.store.read<{ for: string; v: string } | null>("inboxkeys.json", null);
+      if (saved?.for !== this.agentPub) return { mine: false };
+      try { return { mine: true, chain: JSON.parse(nip44.decrypt(saved.v, nip44.getConversationKey(this.sk, this.agentPub))) as Chain }; } catch { return { mine: true }; }
+    };
+    const have = read();
+    if (have.mine) return have.chain;
+    // None yet for this key. Do not start one while switched off, or from a process holding a retired key.
+    if (this.prefs().forwardSecrecy === false || this.stale()) return undefined;
+    // Two processes must not each start a chain, or one would advertise keys the other overwrites.
+    const release = this.store.exclusive?.("inboxkeys");
+    if (this.store.exclusive && !release) return undefined; // nothing has been advertised yet, so nothing can be lost
+    try {
+      const again = read();
+      if (again.mine) return again.chain;
+      const fresh = { epoch: today(), chain: toHex(generateSecretKey()) };
+      this.saveChain(fresh);
+      return fresh;
+    } finally {
+      release?.();
+    }
+  }
+  private saveChain(chain: Chain): void {
+    // ponytail: a rotation in another process between this check and the write is not excluded; the window is one file read.
+    if (this.stale()) return;
+    this.store.write("inboxkeys.json", { for: this.agentPub, v: nip44.encrypt(JSON.stringify(chain), nip44.getConversationKey(this.sk, this.agentPub)) });
+  }
+  /** The public keys contacts should encrypt to, from today for two weeks. Undefined when switched off. */
+  private inboxList(): InboxKeys | undefined {
+    const c = this.prefs().forwardSecrecy === false ? undefined : this.chain();
+    const keys = c ? dayKeys(c, today(), today() + KEYS_AHEAD) : [];
+    return keys.length ? { from: keys[0].day, keys: keys.map((k) => getPublicKey(k.sk)) } : undefined;
+  }
+  /**
+   * Every daily key still derivable, nearest to today first. Used even when the feature is switched off, because
+   * contacts keep encrypting to the keys they were given until their list runs out.
+   */
+  private inboxSecrets(): Uint8Array[] {
+    const c = this.chain();
+    return c ? dayKeys(c, 0, today() + KEYS_AHEAD).sort((a, b) => Math.abs(a.day - today()) - Math.abs(b.day - today())).slice(0, 120).map((k) => k.sk) : [];
+  }
+  /**
+   * Forget the keys of days that ended more than a week before a complete check began. Being offline never
+   * deletes anything: the chain only moves when this device has just heard back from every one of its relays.
+   */
+  private forgetOldKeys(checkedAt: number): void {
+    const c = this.chain();
+    const floor = Math.floor(checkedAt / DAY) - KEEP_KEY_DAYS;
+    if (!c || c.epoch >= floor) return;
+    let chain = fromHex(c.chain);
+    for (let day = c.epoch; day < floor; day++) chain = step(chain);
+    this.saveChain({ epoch: floor, chain: toHex(chain) });
+  }
+  /** A gift wrap encrypted to a contact's key for today. The recipient tag stays their agent key, so relays see nothing new. */
+  private wrapFor(event: { kind: number; content: string; tags: string[][]; created_at: number }, dayPub: string, agent: string): SignedEvent {
+    const seal = createSeal(createRumor(event, this.sk), this.sk, dayPub);
+    const once = generateSecretKey();
+    return finalizeEvent({
+      kind: KIND.GIFT_WRAP,
+      content: nip44.encrypt(JSON.stringify(seal), nip44.getConversationKey(once, dayPub)),
+      created_at: now() - Math.floor(Math.random() * 2 * DAY), // as NIP-59 does, to hide when it was sent
+      tags: [["p", agent]],
+    }, once) as SignedEvent;
+  }
+
   // ---------- one identity on several devices ----------
 
   private background = new Set<Promise<void>>();
@@ -448,7 +566,7 @@ export class Termnl {
   private async mirror(what: "outbox" | "answered" | "contact" | "removed" | "relays", data: unknown): Promise<void> {
     if (!this.prefs().linked) return;
     try {
-      await this.send({ agent: this.agentPub, relays: this.config.relays } as Contact, { type: "mirror", body: { what, device: this.device(), data } });
+      await this.send({ agent: this.agentPub, relays: this.config.relays, inbox: this.inboxList() } as Contact, { type: "mirror", body: { what, device: this.device(), data } });
     } catch { /* the other device catches up from the relays when it can */ }
   }
   /** Apply a note from another of the owner's devices. Existing records are never overwritten by an older copy. */
@@ -875,14 +993,17 @@ export class Termnl {
     const capped = events.length >= this.syncLimit;
 
     const opened: { sender: string; env: Envelope }[] = [];
+    const dayKeysHeld = this.inboxSecrets();
     let dropped = 0;
     for (const ev of events) {
       if (seen.wraps.includes(ev.id)) continue;
-      seen.wraps.push(ev.id);
       try {
-        opened.push(this.open(ev as SignedEvent));
-      } catch {
+        opened.push(this.open(ev as SignedEvent, dayKeysHeld));
+        seen.wraps.push(ev.id);
+      } catch (e) {
         dropped++;
+        // One that no key opens is left unseen and tried again at the next check.
+        if (!(e instanceof NoKeyError)) seen.wraps.push(ev.id);
       }
     }
     opened.sort((a, b) => a.env.sent_at - b.env.sent_at);
@@ -908,8 +1029,13 @@ export class Termnl {
     }
     seen.wraps = seen.wraps.slice(-5000);
     seen.envelopes = seen.envelopes.slice(-5000);
-    seen.last_sync = started;
+    const status = this.pool.listConnectionStatus();
+    const reached = this.config.relays.filter((r) => status.get(normalizeURL(r))).length;
+    // A check that reached no relay learned nothing, so the next one must look back just as far.
+    if (reached) seen.last_sync = started;
     this.store.write("seen.json", seen);
+    // Old keys go only when every relay we use was reachable: one that is down may still hold messages for those days.
+    if (!capped && reached === this.config.relays.length) this.forgetOldKeys(started);
     await this.flushScheduled();
     return { processed, dropped, ...(capped && { capped }) };
   }
@@ -961,24 +1087,40 @@ export class Termnl {
     if (!certValid(this.agent.cert, this.config.identity, this.agentPub)) {
       throw new Error("This agent key has expired. The owner must run: termnl rotate");
     }
-    const env = envelope.parse({ v: 1, id, sent_at: now(), expires_at: now() + 14 * DAY, ...extra, ...msg });
-    const wrap = wrapEvent({ kind: KIND.ENVELOPE, content: JSON.stringify(env), tags: [], created_at: now() }, this.sk, to.agent);
+    const mine = this.inboxList();
+    const env = envelope.parse({ v: 1, id, sent_at: now(), expires_at: now() + 14 * DAY, inbox: mine, ...extra, ...msg });
+    const rumor = { kind: KIND.ENVELOPE, content: JSON.stringify(env), tags: [], created_at: now() };
+    // Their key for today if they have told us one; otherwise their agent key, as before (older clients, or a list that ran out).
+    let dayPub = mine && to.inbox ? to.inbox.keys[today() - to.inbox.from] : undefined;
+    let wrap: ReturnType<typeof wrapEvent>;
+    try {
+      wrap = dayPub ? this.wrapFor(rumor, dayPub, to.agent) : wrapEvent(rumor, this.sk, to.agent);
+    } catch {
+      // A key in their list that is not a real public key must not stop the message.
+      dayPub = undefined;
+      wrap = wrapEvent(rumor, this.sk, to.agent);
+    }
     const results = await Promise.allSettled(this.pool.publish(to.relays, wrap, {
       onauth: async (event) => finalizeEvent(event, this.sk), maxWait: 10000,
     }));
     const ok = results.filter((r) => r.status === "fulfilled").length;
     if (ok === 0) throw new NoRelayError(`None of the contact's ${to.relays.length} relay(s) accepted the message`);
-    this.log("out", to.agent, env.type, env.id, `${ok}/${to.relays.length} relays`);
+    this.log("out", to.agent, env.type, env.id, `${ok}/${to.relays.length} relays${dayPub ? ", daily key" : ""}`);
   }
 
   /** Unwrap and authenticate a gift wrap. Returns the sender's agent key and the validated envelope. */
-  private open(wrap: SignedEvent): { sender: string; env: Envelope } {
+  private open(wrap: SignedEvent, dayKeysHeld: Uint8Array[] = []): { sender: string; env: Envelope } {
     if (wrap.kind !== KIND.GIFT_WRAP) throw new Error("not a gift wrap");
     if (wrap.content.length > MAX_WRAP_BYTES) throw new Error("oversized");
     if (!verifyEvent(wrap)) throw new Error("bad wrap signature");
-    const seal = JSON.parse(nip44.decrypt(wrap.content, nip44.getConversationKey(this.sk, wrap.pubkey))) as SignedEvent;
+    // It was encrypted either to the agent key or to one of our daily keys; the wrong key fails its integrity check.
+    let seal: SignedEvent | undefined, key = this.sk;
+    for (const k of [this.sk, ...dayKeysHeld]) {
+      try { seal = JSON.parse(nip44.decrypt(wrap.content, nip44.getConversationKey(k, wrap.pubkey))) as SignedEvent; key = k; break; } catch { /* not this key */ }
+    }
+    if (!seal) throw new NoKeyError("no key opens this: it may be older than the keys still held");
     if (seal.kind !== KIND.SEAL || !verifyEvent(seal)) throw new Error("bad seal");
-    const rumor = JSON.parse(nip44.decrypt(seal.content, nip44.getConversationKey(this.sk, seal.pubkey)));
+    const rumor = JSON.parse(nip44.decrypt(seal.content, nip44.getConversationKey(key, seal.pubkey)));
     if (rumor.pubkey !== seal.pubkey) throw new Error("seal and rumor authors differ");
     if (rumor.kind !== KIND.ENVELOPE) throw new Error("not an termnl envelope");
     return { sender: seal.pubkey, env: envelope.parse(JSON.parse(rumor.content)) };
@@ -986,6 +1128,16 @@ export class Termnl {
 
   /** Apply one authenticated envelope. Returns false when it is ignored. */
   private async handle(sender: string, env: Envelope): Promise<boolean> {
+    const ok = await this.apply(sender, env);
+    // Their daily keys ride on anything they send. Only a list at least as new as the one held is kept,
+    // so a message that arrives late cannot bring back keys they have since deleted.
+    const c = ok && env.inbox && env.type !== "mirror" ? this.contacts().find((x) => x.agent === sender) : undefined;
+    // A list dated beyond tomorrow comes from a wrong clock and would block every later, correct one.
+    if (c && env.inbox && env.inbox.from <= today() + 2 && env.inbox.from >= (c.inbox?.from ?? 0) && JSON.stringify(env.inbox) !== JSON.stringify(c.inbox)) this.saveContact({ ...c, inbox: env.inbox }, true);
+    return ok;
+  }
+
+  private async apply(sender: string, env: Envelope): Promise<boolean> {
     // Only this profile's own key can speak for its other devices.
     if (env.type === "mirror") return sender === this.agentPub && this.onMirror(env.body);
     if (env.type === "knock") return this.onKnock(sender, env.body);

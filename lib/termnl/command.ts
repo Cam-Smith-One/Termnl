@@ -15,11 +15,13 @@ export function commandWords(line: string): string[] {
   return words
 }
 
-export function options(words: string[]) {
+/** `switches` are flags that take no value, such as --block. */
+export function options(words: string[], switches: string[] = []) {
   const args: string[] = [], flags: Record<string, string> = {}
   for (let index = 0; index < words.length; index++) {
     if (words[index].startsWith('--')) {
       const key = words[index].slice(2)
+      if (switches.includes(key)) { flags[key] = 'true'; continue }
       const value = words[++index]
       if (!value || value.startsWith('--')) throw new Error(`--${key} needs a value`)
       flags[key] = value
