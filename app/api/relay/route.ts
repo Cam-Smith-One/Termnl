@@ -6,8 +6,7 @@ import { serveRelay, type RelayEvent, type RelayStore } from "@/lib/relay"
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
-// Run next to the database (Sydney). From the default US region every query cost about 0.8 s, and a delivery makes several.
-export const preferredRegion = "syd1"
+// Runs next to the database (Sydney): see "regions" in vercel.json. From the default US region every query cost about 0.8 s.
 
 const TABLE = "termnl_relay_events"
 const PER_RECIPIENT_PER_DAY = 500, GLOBAL_PER_HOUR = 5000, KEEP_DAYS = 30
