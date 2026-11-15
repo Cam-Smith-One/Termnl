@@ -81,6 +81,9 @@ Each person decides what their agent may do on their behalf.
 | **Catch up in a few lines** | Ask what you missed: who wrote, what needs a decision, what was answered. |
 | **Say when you're busy** | Set a status such as "Heads down until 2 pm". Senders see it, and your notifications are held. |
 | **Teams** | Name a set of contacts and message them all at once. Members only ever see people they have paired with themselves. |
+| **Find and tidy** | Search everything you have exchanged. Ask for a message to be removed from both sides after a set time, and choose how long answered messages stay on your device. |
+| **Drop a contact** | Remove someone, or block them so they cannot pair with you again. They are not told. |
+| **Relays that look after themselves** | Termnl can test its relays, find working replacements and tell your contacts where to deliver. |
 | **Hear about it straight away** | While your agent is open you get a desktop notification within seconds of a message arriving, without polling. |
 | **An inbox in Claude Code** | A panel beside your chat lists what people have sent you, with reply, forward and new message buttons. |
 | **See it as a card** | Chat apps that support MCP Apps show messages as a card with buttons; terminals get a tidy Markdown list; Claude Code has an inbox panel. |
@@ -239,13 +242,13 @@ Codex can register this server with `codex mcp add termnl -- node
 termnl -- node /absolute/path/to/termnl/dist-cli/mcp.mjs`. Initialize the local
 profile before starting the client. Use `TERMNL_HOME` in the client's server
 environment for a non-default profile. Restart the plugin after a key rotation
-or relay configuration change.
+or a relay change made from the CLI.
 
-The sixteen agent tools are `whoami`, `list_contacts`, `check_inbox`, `send_request`, `respond`,
+The seventeen agent tools are `whoami`, `list_contacts`, `check_inbox`, `send_request`, `respond`,
 `save_attachments`, `list_outbox`, `list_commitments`, `get_log`, `inbox_check_interval`, `conversation`,
-`catch_up`, `scheduled`, `set_status`, `teams` and `pairing`. `pairing` is refused unless the owner sets
-`"agentMayPair": true` in the mandate. **Owner approval, mandate editing, key rotation and handle
-claims are not MCP tools.**
+`catch_up`, `search`, `scheduled`, `set_status`, `teams` and `pairing`. `pairing` is refused unless the owner sets
+`"agentMayPair": true` in the mandate. **Owner approval, mandate editing, key rotation, removing or
+blocking a contact, relay changes and handle claims are not MCP tools.**
 The CLI owner performs those actions out of band. A local agent with unrestricted
 filesystem access can edit files directly; this tool boundary is not an operating
 system sandbox.
@@ -316,6 +319,15 @@ Several processes can share one profile: only one checks the relays at a time, a
   `termnl watch`) is running at or after that time, must be inside the mandate, and cannot carry files.
 - **Teams.** `termnl team design sam,alex` names a set of contacts; sending to `design` sends each member their
   own copy with the team name. A team is local to you: nothing is shared except its name on those messages.
+- **Sending while offline.** If none of a contact's relays accepts a message, it is kept and tried again at every
+  check for three days, then marked as not delivered. It keeps the same id, so it is never shown twice.
+- **Search.** `termnl search "kickoff"` looks through subjects, details, notes and contact names in both directions.
+- **Expiry and retention.** `termnl send sam inform "Door code 4471" --expires 7d` asks for the message to be removed
+  from both sides after that time. It is a request to the other side's client: it cannot force deletion, and
+  clients older than 0.4.0 ignore it. `termnl retention 90` removes answered messages from your own device after
+  90 days. Signed agreements are always kept.
+- **Removing a contact.** `termnl remove sam` stops their messages reaching you; `--block` also refuses any later
+  pairing with them until `termnl unblock <npub>`. Nothing is sent to tell them, and your history is kept.
 - **Pairing from chat.** With `"agentMayPair": true` in the mandate, the agent can create an invite or accept
   one you paste. It is off by default because pairing decides who can reach you.
 
@@ -357,11 +369,25 @@ verified acceptance and read-back of kind 1059 events from fresh keys. The same
 probe saw Damus acknowledge a publish without returning it on read-back, and
 nos.lol time out. These are observations, not availability guarantees.
 
-Use `relays wss://your-relay.example` to change the list before initialization or
-in an unlocked profile. Remote relays must use WSS. WS is allowed only for local
-Node/development testing. Changing relay lists does not automatically notify
-existing contacts: exchange a new invite so their records know where to deliver.
-Use relays you trust. An acknowledgement is not a guarantee of durable delivery.
+`termnl relays wss://your-relay.example ...` replaces the list. Remote relays must use WSS. WS is
+allowed only for local Node/development testing. Use relays you trust. An acknowledgement is not a
+guarantee of durable delivery.
+
+### Finding and changing relays
+
+- `termnl relays check` tests each of your relays the way a stranger's message would use it: it publishes a
+  throwaway gift wrap from keys made for that one test and reads it back. A relay that accepts a message
+  but does not return it fails.
+- `termnl relays find` runs the same test on relays you are not using: a short built-in list plus the relays
+  your contacts use. It lists the ones that pass, fastest first.
+- `termnl relays heal` replaces relays that fail with ones that pass, aiming for three. If nothing answers at
+  all it changes nothing, since that usually means you are offline.
+- `termnl relays auto on` lets the plugin do that by itself, at most once a day. It is off by default, because a
+  new relay learns your agent key and IP address.
+
+Whenever the list changes, every confirmed contact is sent the new list, signed by your agent key, and
+delivers there from their next check. This works with clients from 0.3.3. Relays you leave are still read for
+30 days, so messages already on their way are not lost.
 
 ## Encrypted attachments
 
@@ -436,7 +462,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a map of the code.
 - No remote signing (NIP-46).
 - Relays see the recipient agent key and client IP. Relays requiring NIP-42 also
   see the authenticating agent key. Public relays may rate-limit, reject, drop or
-  expire events. Delivery and countersignature retries are not durable queues.
+  expire events. Messages you send are queued and retried for three days; answers, receipts and
+  countersignatures are not.
 - Event kinds 4270–4273 are provisional, not registered Nostr kinds.
 - Browser and local plugin profiles are separate for now.
 - Local file storage is not a hardened multi-process database. Relay checks are serialised by a lock,

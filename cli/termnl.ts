@@ -1,7 +1,5 @@
 #!/usr/bin/env node
-import WebSocket from "ws";
-import { useWebSocketImplementation as installWebSocket } from "nostr-tools/pool";
-installWebSocket(WebSocket);
+import "./ws";
 import { parseArgs } from "node:util";
 import { writeFileSync, unlinkSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -32,14 +30,18 @@ const HELP = `termnl <command>
   watch [--minutes 15]                                     stay running and notify when a message arrives (no polling; --minutes is the fallback check)
   inbox [--all]                                            list inbound requests
   approve <request-id> [--accept]                          approve a request outside the mandate
-  send <contact|team[,contact...]> <request|offer|inform> <subject> [--at <ISO time>] [--re <id>] [--details ..] [--amount n] [--currency AUD] [--due date] [--file path ...]
+  send <contact|team[,contact...]> <request|offer|inform> <subject> [--at <ISO time>] [--expires <7d|ISO time>] [--re <id>] [--details ..] [--amount n] [--currency AUD] [--due date] [--file path ...]
                                                            several contacts each get their own copy; add --show-recipients to let them see each other
   save <request-id>                                        download and decrypt a request's attachments (saved, never opened)
   commitments                                              list signed commitments
   accept|decline|counter <request-id> [note]                 respond (accept needs mandate or prior owner approval)
   outbox                                                   show sent requests and replies
   mandate [JSON]                                           read or replace the owner's mandate
-  relays [wss://... ...]                                    read or replace relay list
+  relays [wss://... ...]                                    read the relay list, or replace it and tell your contacts
+  relays check | find | heal | auto <on|off>               test your relays; list working ones you could add; replace failing ones; do that automatically
+  remove <contact> [--block] | unblock <npub> | blocked    stop hearing from a contact; --block also refuses new pairings with them
+  search <text>                                            find messages by subject, details, note or contact name
+  retention <days|off>                                     remove answered messages from this device after that many days
   handle whois <name> | handle claim <name>                  optional termnl.app handle registry
   rotate [--days 30]                                       issue a new agent key and notify contacts
   log [--last 50]                                          show recent activity
@@ -70,9 +72,12 @@ const { values, positionals } = parseArgs({
     last: { type: "string" },
     help: { type: "boolean" },
     "confirm-profile-reset": { type: "boolean" },
+    block: { type: "boolean" },
+    expires: { type: "string" },
   },
 });
 const [cmd, ...args] = positionals;
+const PROFILE_FILES = ["config.json","identity.key","agent.json","mandate.json","contacts.json","inbox.json","outbox.json","commitments.json","invites.json","seen.json","teams.json","prefs.json","scheduled.json","blocked.json"];
 const out = (v: unknown) => console.log(typeof v === "string" ? v : JSON.stringify(v, null, 2));
 
 async function main(): Promise<void> {
@@ -95,7 +100,7 @@ async function main(): Promise<void> {
       case "lock": return out("CLI session closed; the owner-only profile files remain on disk.");
       case "backup": {
         if (!args[0]) throw new Error("backup <new-file.json> — contains plaintext keys; keep offline");
-        const names = ["config.json","identity.key","agent.json","mandate.json","contacts.json","inbox.json","outbox.json","commitments.json","invites.json","seen.json"];
+        const names = PROFILE_FILES;
         const files = Object.fromEntries(names.filter(name => mail.store.has(name)).map(name => [name,mail.store.read(name,null)]));
         writeFileSync(args[0],JSON.stringify({version:1,files},null,2),{mode:0o600,flag:"wx"});
         return out(`Wrote owner-only backup to ${args[0]}. It contains plaintext keys: store it offline, not in chat or Git.`);
@@ -103,14 +108,41 @@ async function main(): Promise<void> {
       case "reset": {
         if (!values["confirm-profile-reset"]) throw new Error("This permanently removes the profile. Back up first, then use reset --confirm-profile-reset.");
         mail.close();
-        for (const name of ["config.json","identity.key","agent.json","mandate.json","contacts.json","inbox.json","outbox.json","commitments.json","invites.json","seen.json","log.jsonl"]) {
+        for (const name of [...PROFILE_FILES,"log.jsonl"]) {
           const path = join(mail.store.dir,name);if(existsSync(path))unlinkSync(path);
         }
         return out("Removed this local profile's known files.");
       }
       case "invite":
         return out(`https://termnl.app/pair#${mail.createInvite(Number(values.minutes ?? 60))}`);
-      case "relays": return out(args.length ? mail.setRelays(args) : mail.whoami().relays);
+      case "relays": {
+        const show = (list: { url: string; ok: boolean; ms?: number; error?: string }[]) => list.map((p) => `${p.ok ? "ok  " : "FAIL"} ${p.url}${p.ok ? ` (${p.ms} ms)` : ` - ${p.error}`}`).join("\n") || "None found";
+        if (!args.length) return out(mail.whoami().relays);
+        if (args[0] === "check") return out(show(await mail.checkRelays()));
+        if (args[0] === "find") return out(show(await mail.findRelays()));
+        if (args[0] === "heal") return out(await mail.healRelays());
+        if (args[0] === "auto") {
+          if (args[1] === "on" || args[1] === "off") mail.setPrefs({ autoRelays: args[1] === "on" });
+          return out(`Automatic relay replacement is ${mail.prefs().autoRelays ? "on: a relay that stops working is replaced, at most once a day, and your contacts are told" : "off"}`);
+        }
+        return out(await mail.changeRelays(args));
+      }
+      case "remove": {
+        const c = mail.removeContact(args[0] ?? "", { block: values.block });
+        return out(`${values.block ? "Blocked" : "Removed"} ${c.name ?? npubEncode(c.identity)}. Their messages are now ignored; they have not been told. Your history with them is kept.`);
+      }
+      case "unblock": mail.unblock(args[0] ?? ""); return out("Unblocked. Pair again to hear from them.");
+      case "blocked": return out(mail.blocked().map((b) => npubEncode(b)));
+      case "search": return out(mail.search(args.join(" ")));
+      case "retention": {
+        if (args[0]) {
+          const days = args[0] === "off" ? undefined : Number(args[0]);
+          if (days !== undefined && !(days >= 1 && days <= 3650)) throw new Error("retention <days|off>");
+          mail.setPrefs({ keepDays: days });
+        }
+        const k = mail.prefs().keepDays;
+        return out(k ? `Answered messages are removed from this device after ${k} days. Signed agreements are kept.` : "Messages are kept until you remove the profile.");
+      }
       case "mandate": return out(args.length ? mail.setMandate(JSON.parse(args.join(" "))) : mail.mandate());
       case "outbox": await mail.sync(); return out(mail.outbox());
       case "accept": case "decline": case "counter":
@@ -182,13 +214,17 @@ async function main(): Promise<void> {
         const value = values.amount ? { amount: Number(values.amount), currency: values.currency ?? "AUD" } : undefined;
         const body = { kind: kind as "request" | "offer" | "inform", subject, details: values.details, value, due: values.due, attachments: values.file?.length ? await attach(values.file) : undefined };
         const many = to.split(",").map((t) => t.trim()).filter(Boolean);
+        const days = /^(\d+)d$/.exec(values.expires ?? "")?.[1];
+        const keepUntil = values.expires ? Math.floor(days ? Date.now() / 1000 + Number(days) * 86400 : Date.parse(values.expires) / 1000) : undefined;
+        if (values.expires && (!Number.isFinite(keepUntil) || values.at)) throw new Error("--expires takes a number of days (7d) or an ISO time, and cannot be combined with --at");
         if (values.at) {
           const s = mail.schedule(many, body, Math.floor(Date.parse(values.at) / 1000), { re: values.re, showRecipients: values["show-recipients"] });
           return out(`Scheduled ${s.id} for ${new Date(s.at * 1000).toLocaleString()}. It goes out when Termnl is next running at or after that time.`);
         }
-        const r = await mail.sendToMany(many, body, { owner: true, showRecipients: values["show-recipients"], re: values.re });
-        if (r.sent.length === 1 && !r.failed.length) return out(`Sent ${r.sent[0].id}`);
-        return out(`Sent to ${r.sent.length} of ${r.sent.length + r.failed.length} (${r.sent[0]?.group?.shown ? "they can see each other" : "recipients hidden from each other"})${r.failed.map((f) => `\nFailed for ${npubEncode(f.to)}: ${f.error}`).join("")}`);
+        const r = await mail.sendToMany(many, body, { owner: true, showRecipients: values["show-recipients"], re: values.re, keepUntil });
+        const queued = r.sent.filter((o) => o.unsent).length;
+        if (r.sent.length === 1 && !r.failed.length) return out(queued ? `Queued ${r.sent[0].id}: no relay was reachable. It is retried at every check for three days.` : `Sent ${r.sent[0].id}`);
+        return out(`${queued ? `${queued} queued for retry. ` : ""}Sent to ${r.sent.length - queued} of ${r.sent.length + r.failed.length} (${r.sent[0]?.group?.shown ? "they can see each other" : "recipients hidden from each other"})${r.failed.map((f) => `\nFailed for ${npubEncode(f.to)}: ${f.error}`).join("")}`);
       }
       case "save": {
         const item = [...mail.inbox(), ...mail.outbox()].find((i) => i.id === args[0]);

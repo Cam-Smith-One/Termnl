@@ -55,6 +55,15 @@ export const peerRelayList = z.array(z.string().max(200).refine((value) => {
 }, "A contact's relays must be public wss:// addresses")).min(1).max(8);
 // A public relay plus our own, so one being down or dropping messages does not stop delivery.
 export const DEFAULT_RELAYS = ["wss://relay.primal.net", "wss://termnl.app/relay"];
+/**
+ * Public relays worth trying when one of ours stops working. Being listed proves nothing: each is tested
+ * with a throwaway message (probeRelay) before it is used. Relays the owner's contacts use are tried too.
+ */
+export const CANDIDATE_RELAYS = [
+  // These four passed the test on 15 November 2026; the last two are large relays that did not that day.
+  "wss://offchain.pub", "wss://auth.nostr1.com", "wss://relay.snort.social", "wss://nostr.oxtr.dev",
+  "wss://relay.damus.io", "wss://nos.lol", ...DEFAULT_RELAYS,
+];
 
 export const requestBody = z.object({
   kind: z.enum(["request", "offer", "inform"]),
@@ -119,6 +128,8 @@ export const envelope = z.discriminatedUnion("type", [
     group: groupInfo.optional(),
     /** The earlier message this one answers. Outside the body, like group. */
     re: z.string().uuid().optional(),
+    /** The sender asks that the message be removed from both sides at this time. A request: older clients ignore it. */
+    keep_until: z.number().int().optional(),
   }),
 );
 export type Envelope = z.infer<typeof envelope>;

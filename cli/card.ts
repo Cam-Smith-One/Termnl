@@ -115,6 +115,9 @@ body[data-standalone]{max-width:880px;margin:auto;padding:20px}
     if (re) more.appendChild(el("div", "said", "In reply to: " + re));
     var team = sent ? item.team : item.untrusted_team_name;
     if (team) more.appendChild(el("div", "said", (sent ? "Sent to your team: " : "Sent to their team: ") + team));
+    var gone = sent ? item.removed_from_both_sides_at : item.sender_asked_to_remove_at;
+    if (gone) more.appendChild(el("div", "said", "Removed from both sides " + when(gone)));
+    if (sent && item.delivery) more.appendChild(el("div", "note", item.delivery.indexOf("not sent") === 0 ? "Not sent yet. Termnl keeps trying." : "Could not be delivered."));
     var rc = item.receipt;
     if (rc && (rc.delivered || rc.shown_to_them)) {
       var line = rc.shown_to_them ? "Shown to them " + when(rc.shown_to_them) : "Delivered " + when(rc.delivered);

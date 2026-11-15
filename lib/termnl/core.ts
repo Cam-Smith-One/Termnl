@@ -3,7 +3,7 @@ import { SimplePool } from "nostr-tools/pool";
 import { bytesToHex, hexToBytes } from "nostr-tools/utils";
 import * as nip44 from "nostr-tools/nip44";
 import { wrapEvent } from "nostr-tools/nip59";
-import { npubEncode } from "nostr-tools/nip19";
+import { decode as nipDecode, npubEncode } from "nostr-tools/nip19";
 import {
   DEFAULT_MANDATE,
   KIND,
@@ -18,6 +18,7 @@ import {
   withinLimit,
   autoAcceptable,
   relayList,
+  CANDIDATE_RELAYS,
   type Envelope,
   type Mandate,
   type RequestBody,
@@ -60,6 +61,8 @@ export interface InboxItem {
   re?: string;
   /** The latest receipt we sent back for it. */
   receipted?: "delivered" | "shown";
+  /** The sender asked for it to be removed at this time. */
+  keep_until?: number;
 }
 
 export interface OutboxItem {
@@ -76,6 +79,9 @@ export interface OutboxItem {
   /** When their side last told us something about it: a receipt or an answer. */
   updated_at?: number;
   receipt?: { delivered_at?: number; shown_at?: number; note?: string };
+  keep_until?: number;
+  /** No relay took it yet: "queued" is retried at every check, "failed" was given up on after three days. */
+  unsent?: "queued" | "failed";
 }
 
 export interface Prefs {
@@ -85,6 +91,11 @@ export interface Prefs {
   /** A short status sent with delivery receipts, such as "Heads down until 2 pm". */
   status?: { text: string; until?: number };
   lastCatchUp?: number;
+  /** Answered messages older than this many days are removed from this device. Signed agreements are kept. */
+  keepDays?: number;
+  /** The owner lets Termnl replace a relay that stops working, once a day at most, and tell contacts. */
+  autoRelays?: boolean;
+  lastRelayCheck?: number;
 }
 
 /** A message queued for later. Always sent as the agent, so the mandate is checked again when it falls due. */
@@ -121,6 +132,37 @@ interface Config {
   identity: string;
   relays: string[];
   name?: string;
+  /** Relays we have stopped using but still read, so messages already on their way there are not lost. */
+  retired?: { url: string; until: number }[];
+}
+
+export interface RelayProbe {
+  url: string;
+  ok: boolean;
+  ms?: number;
+  error?: string;
+}
+
+/**
+ * Test a relay the way a stranger's message would use it: publish a throwaway gift wrap and read it back.
+ * The keys are made for this one test, so the relay learns nothing about the profile except the client's IP.
+ */
+export async function probeRelay(url: string, maxWait = 6000): Promise<RelayProbe> {
+  const pool = new SimplePool(), sk = generateSecretKey(), started = Date.now();
+  const onauth = async (event: Parameters<typeof finalizeEvent>[0]) => finalizeEvent(event, sk);
+  try {
+    const wrap = wrapEvent({ kind: KIND.ENVELOPE, content: "probe", tags: [], created_at: now() }, sk, getPublicKey(sk));
+    await Promise.all(pool.publish([url], wrap, { onauth, maxWait }));
+    const options = { maxWait, onauth };
+    const back = await pool.querySync([url], { kinds: [KIND.GIFT_WRAP], "#p": [getPublicKey(sk)], limit: 5 }, options);
+    if (!back.some((e) => e.id === wrap.id)) return { url, ok: false, error: "accepted the message but did not return it" };
+    return { url, ok: true, ms: Date.now() - started };
+  } catch (e) {
+    return { url, ok: false, error: String((e as Error)?.message ?? e).slice(0, 120) };
+  } finally {
+    pool.close([url]);
+    pool.destroy?.();
+  }
 }
 interface AgentKey {
   sk: string;
@@ -138,6 +180,9 @@ interface Seen {
 }
 
 export class MandateError extends Error {}
+/** Every one of the contact's relays refused or was unreachable. */
+class NoRelayError extends Error {}
+const RETRY_DAYS = 3;
 
 function tag(ev: { tags: string[][] }, name: string): string | undefined {
   return ev.tags.find((t) => t[0] === name)?.[1];
@@ -239,6 +284,7 @@ export class Termnl {
     const inv = decodeInvite(text);
     if (inv.identity === this.config.identity) throw new Error("That is your own invite");
     if (!certValid(inv.cert, inv.identity, inv.agent)) throw new Error("Invite has an invalid or expired certificate");
+    if (this.blocked().includes(inv.identity)) throw new Error("You have blocked this person. Unblock them first with: termnl unblock <npub>");
     // An invite is only a claim: anyone can build one from a certificate they have seen.
     // The contact stays pending until its agent key actually writes to us.
     // For someone already confirmed, nothing in the invite is believed: their record changes only when
@@ -299,10 +345,86 @@ export class Termnl {
   }
   setRelays(value: string[]): string[] {
     const relays = relayList.parse(value);
-    this.pool.close(this.config.relays);
+    this.pool.close(this.readRelays());
+    // Keep reading the ones we leave for 30 days: contacts who have not heard yet still deliver there.
+    const left = this.config.relays.filter((r) => !relays.includes(r)).map((url) => ({ url, until: now() + 30 * DAY }));
+    this.config.retired = [...left, ...(this.config.retired ?? [])].filter((r) => r.until > now() && !relays.includes(r.url)).slice(0, 8);
     this.config.relays = relays;
     this.store.write("config.json", this.config);
     return relays;
+  }
+  /** Where to look for messages: our relays, plus the ones we recently left. */
+  private readRelays(): string[] {
+    return [...this.config.relays, ...(this.config.retired ?? []).filter((r) => r.until > now()).map((r) => r.url)];
+  }
+  /** Change relays and tell every confirmed contact, signed by this agent key, so they deliver to the new ones. */
+  async changeRelays(value: string[]): Promise<{ relays: string[]; notified: number }> {
+    const relays = this.setRelays(value);
+    let notified = 0;
+    for (const c of this.contacts().filter((x) => !x.pending)) {
+      try {
+        // A contact's relay list changes on exactly this message from our own key; released clients already honour it.
+        await this.send(c, { type: "knock_accept", body: this.pairingBody() });
+        notified++;
+      } catch { /* unreachable for now: they keep delivering to the relays we still read */ }
+    }
+    return { relays, notified };
+  }
+  checkRelays(): Promise<RelayProbe[]> {
+    return Promise.all(this.config.relays.map((r) => probeRelay(r)));
+  }
+  /** Working relays we are not using yet, fastest first: the built-in list plus the ones our contacts use. */
+  async findRelays(): Promise<RelayProbe[]> {
+    // Tests never touch the public network.
+    const builtIn = process.env.TERMNL_TEST === "1" ? [] : CANDIDATE_RELAYS;
+    const pool = [...new Set([...builtIn, ...this.contacts().flatMap((c) => c.relays)])].filter((r) => !this.config.relays.includes(r));
+    return (await Promise.all(pool.map((r) => probeRelay(r)))).filter((p) => p.ok).sort((a, b) => (a.ms ?? 0) - (b.ms ?? 0));
+  }
+  /**
+   * Replace relays that fail the test with working ones, up to `want`, and tell contacts.
+   * ponytail: one failed test drops a relay. It is still read for 30 days, so a relay having a bad hour costs
+   * nothing but a notice to contacts; add a strike count if relays flap.
+   */
+  async healRelays(want = 3): Promise<{ relays: string[]; added: string[]; dropped: string[]; notified: number }> {
+    const health = await this.checkRelays();
+    const good = health.filter((h) => h.ok).map((h) => h.url), dropped = health.filter((h) => !h.ok).map((h) => h.url);
+    const same = { relays: this.config.relays, added: [], dropped: [], notified: 0 };
+    if (!dropped.length && good.length >= Math.min(want, 2)) return same;
+    const added = (await this.findRelays()).slice(0, Math.max(0, want - good.length)).map((p) => p.url);
+    // Nothing answered at all: far more likely this machine is offline than every relay being gone.
+    if (!added.length && (!good.length || !dropped.length)) return same;
+    return { ...(await this.changeRelays([...good, ...added])), added, dropped };
+  }
+  blocked(): string[] {
+    return this.store.read<string[]>("blocked.json", []);
+  }
+  /** Owner only. Their messages are ignored from now on; nothing is sent to tell them. History is kept. */
+  removeContact(ref: string, opts: { block?: boolean } = {}): Contact {
+    const c = this.resolveContact(ref);
+    this.store.write("contacts.json", this.contacts().filter((x) => x.identity !== c.identity));
+    if (this.teams().length) this.store.write("teams.json", this.teams().map((t) => ({ ...t, members: t.members.filter((m) => m !== c.identity) })).filter((t) => t.members.length));
+    if (this.scheduled().length) this.store.write("scheduled.json", this.scheduled().map((s) => ({ ...s, to: s.to.filter((i) => i !== c.identity) })).filter((s) => s.to.length));
+    // Blocking also refuses any later invite from, or to, the same identity.
+    if (opts.block) this.store.write("blocked.json", [...new Set([...this.blocked(), c.identity])]);
+    this.log("owner", c.agent, opts.block ? "block" : "remove", c.identity);
+    return c;
+  }
+  unblock(ref: string): boolean {
+    const id = ref.startsWith("npub") ? String(nipDecode(ref).data) : ref;
+    this.store.write("blocked.json", this.blocked().filter((b) => b !== id));
+    return true;
+  }
+  /** Messages in either direction whose subject, details, note or contact name contain the text. Newest first. */
+  search(text: string): { dir: "in" | "out"; at: number; item: InboxItem | OutboxItem }[] {
+    const q = text.trim().toLowerCase();
+    if (!q) return [];
+    const names = new Map(this.contacts().map((c) => [c.identity, c.name ?? ""]));
+    const hit = (who: string, body: RequestBody, note?: string) =>
+      [names.get(who), body.subject, body.details, note].some((v) => v?.toLowerCase().includes(q));
+    return [
+      ...this.inbox().filter((i) => hit(i.from, i.body)).map((item) => ({ dir: "in" as const, at: item.received_at, item })),
+      ...this.outbox().filter((o) => hit(o.to, o.body, o.note)).map((item) => ({ dir: "out" as const, at: item.sent_at, item })),
+    ].sort((a, b) => b.at - a.at).slice(0, 50);
   }
   contacts(): Contact[] {
     return this.store.read<Contact[]>("contacts.json", []);
@@ -443,7 +565,7 @@ export class Termnl {
   // ---------- agent actions ----------
 
   /** Send a request. Outside the mandate it is refused unless the owner is sending it. */
-  async sendRequest(to: string, raw: RequestBody, opts: { owner?: boolean; group?: OutboxItem["group"]; re?: string } = {}): Promise<OutboxItem> {
+  async sendRequest(to: string, raw: RequestBody, opts: { owner?: boolean; group?: OutboxItem["group"]; re?: string; keepUntil?: number } = {}): Promise<OutboxItem> {
     const body = requestBody.parse(raw);
     if (!opts.owner && !withinLimit(body, this.mandate().outbound)) {
       throw new MandateError(
@@ -464,6 +586,7 @@ export class Termnl {
     const known = !!opts.re && (this.inbox().some((i) => i.id === opts.re && i.from === who) || this.outbox().some((o) => o.id === opts.re && o.to === who));
     if (opts.re && !known && !opts.group) throw new Error("in_reply_to must be a message exchanged with this contact");
     const re = known ? opts.re : undefined;
+    if (opts.keepUntil !== undefined && !(opts.keepUntil > now())) throw new Error("The expiry must be in the future");
     const id = randomUUID();
     const item: OutboxItem = {
       id,
@@ -474,17 +597,50 @@ export class Termnl {
       status: "open",
       group: opts.group,
       re,
+      keep_until: opts.keepUntil,
     };
-    // Hidden recipients send nothing extra, so a receiver cannot even tell it went to others.
-    const g = opts.group;
-    await this.send(contact, { type: "request", body }, id, {
-      group: g?.shown ? { id: g.id, to: g.to.map((i) => recipientTag(g.id, i)), name: g.name } : undefined,
-      re,
-    });
+    // Hidden recipients send nothing extra, so a receiver cannot even tell it went to others (see sendItem).
+    try {
+      await this.sendItem(contact, item);
+    } catch (e) {
+      // Offline, or their relays are down: keep it and try again at every check, rather than lose it.
+      if (!(e instanceof NoRelayError)) throw e;
+      item.unsent = "queued";
+    }
     const outbox = this.outbox();
     outbox.push(item);
     this.store.write("outbox.json", outbox);
     return item;
+  }
+
+  private sendItem(contact: Contact, item: OutboxItem): Promise<void> {
+    const g = item.group;
+    return this.send(contact, { type: "request", body: item.body }, item.id, {
+      group: g?.shown ? { id: g.id, to: g.to.map((i) => recipientTag(g.id, i)), name: g.name } : undefined,
+      re: item.re,
+      keep_until: item.keep_until,
+    });
+  }
+
+  /** Try queued messages again. The id is unchanged, so a copy that did get through is not shown twice. */
+  private async flushUnsent(): Promise<void> {
+    for (const q of this.outbox().filter((o) => o.unsent === "queued")) {
+      const contact = this.contacts().find((c) => c.identity === q.to && !c.pending);
+      let state: OutboxItem["unsent"] = "queued";
+      try {
+        if (!contact) throw new Error("no longer a contact");
+        await this.sendItem(contact, q);
+        state = undefined;
+      } catch (e) {
+        if (!(e instanceof NoRelayError) || q.sent_at < now() - RETRY_DAYS * DAY) state = "failed";
+      }
+      if (state === "queued") continue;
+      const outbox = this.outbox(), item = outbox.find((o) => o.id === q.id);
+      if (!item) continue;
+      item.unsent = state;
+      item.updated_at = now(); // so catching up mentions a message that could not be delivered
+      this.store.write("outbox.json", outbox);
+    }
   }
 
   /**
@@ -494,19 +650,19 @@ export class Termnl {
   async sendToMany(
     to: string[],
     raw: RequestBody,
-    opts: { owner?: boolean; showRecipients?: boolean; re?: string; team?: string } = {},
+    opts: { owner?: boolean; showRecipients?: boolean; re?: string; team?: string; keepUntil?: number } = {},
   ): Promise<{ group: string; sent: OutboxItem[]; failed: { to: string; error: string }[] }> {
     // Resolve everyone first, so a mistyped name stops the send before anyone gets a copy. A name may be a team.
     const { contacts, team } = this.recipients(to);
     if (contacts.length > MAX_RECIPIENTS) throw new Error(`At most ${MAX_RECIPIENTS} contacts at once`);
-    if (contacts.length === 1) return { group: "", sent: [await this.sendRequest(contacts[0].identity, raw, { owner: opts.owner, re: opts.re })], failed: [] };
+    if (contacts.length === 1) return { group: "", sent: [await this.sendRequest(contacts[0].identity, raw, { owner: opts.owner, re: opts.re, keepUntil: opts.keepUntil })], failed: [] };
     const name = opts.team ?? team;
     // A team is a known set of people, so its members see each other unless told otherwise.
     const group = { id: randomUUID(), to: contacts.map((c) => c.identity), shown: opts.showRecipients ?? !!name, name };
     const sent: OutboxItem[] = [], failed: { to: string; error: string }[] = [];
     for (const c of contacts) {
       try {
-        sent.push(await this.sendRequest(c.identity, raw, { owner: opts.owner, group, re: opts.re }));
+        sent.push(await this.sendRequest(c.identity, raw, { owner: opts.owner, group, re: opts.re, keepUntil: opts.keepUntil }));
       } catch (e) {
         if (e instanceof MandateError) throw e; // the same for every recipient, and nothing has been sent yet
         failed.push({ to: c.identity, error: (e as Error).message });
@@ -565,10 +721,28 @@ export class Termnl {
     const release = this.store.exclusive?.("sync");
     if (this.store.exclusive && !release) return { processed: 0, dropped: 0, busy: true };
     try {
-      return await this.syncNow();
+      const result = await this.syncNow();
+      await this.flushUnsent();
+      this.prune();
+      const p = this.prefs();
+      if (p.autoRelays && now() - (p.lastRelayCheck ?? 0) > DAY) {
+        this.setPrefs({ lastRelayCheck: now() });
+        await this.healRelays().catch(() => undefined);
+      }
+      return result;
     } finally {
       release?.();
     }
+  }
+
+  /** Remove what has reached the sender's expiry, and answered messages older than the owner's keepDays. */
+  private prune(): void {
+    const keep = this.prefs().keepDays, t = now();
+    const gone = (at: number, open: boolean, until?: number) => (until !== undefined && until <= t) || (!!keep && !open && at < t - keep * DAY);
+    const inbox = this.inbox(), a = inbox.filter((i) => !gone(i.received_at, i.status === "open", i.keep_until));
+    if (a.length !== inbox.length) this.store.write("inbox.json", a);
+    const outbox = this.outbox(), b = outbox.filter((o) => !gone(o.sent_at, o.status === "open", o.keep_until));
+    if (b.length !== outbox.length) this.store.write("outbox.json", b);
   }
 
   /**
@@ -586,7 +760,9 @@ export class Termnl {
       try {
         const had = new Set(this.inbox().map((i) => i.id));
         const was = new Map(this.outbox().map((o) => [o.id, o.status]));
+        const relays = this.readRelays().join();
         await this.sync();
+        if (relays !== this.readRelays().join()) { sub.close(); sub = subscribe(); } // the relay list changed under us
         const messages = this.inbox().filter((i) => !had.has(i.id));
         const replies = this.outbox().filter((o) => was.has(o.id) && was.get(o.id) !== o.status);
         if (messages.length || replies.length) onNew({ messages, replies });
@@ -597,10 +773,11 @@ export class Termnl {
     // A burst of arrivals becomes one check.
     const wake = () => { clearTimeout(timer); timer = setTimeout(check, 1500); };
     // limit 0 asks for nothing stored, only what arrives from now on. No "since": gift-wrap timestamps are randomised into the past.
-    const sub = this.pool.subscribeMany(this.config.relays, { kinds: [KIND.GIFT_WRAP], "#p": [this.agentPub], limit: 0 }, {
+    const subscribe = () => this.pool.subscribeMany(this.readRelays(), { kinds: [KIND.GIFT_WRAP], "#p": [this.agentPub], limit: 0 }, {
       onevent: wake,
       onauth: async (event) => finalizeEvent(event, this.sk),
     });
+    let sub = subscribe();
     const fallback = setInterval(check, Math.max(5, opts.fallbackMinutes ?? 15) * 60_000);
     // A local file read, not a network call: only goes to the relays when a scheduled message has fallen due.
     const due = setInterval(() => { if (this.scheduled().some((s) => s.at <= now())) void check(); }, 30_000);
@@ -617,7 +794,7 @@ export class Termnl {
     // onauth only from its querySync declaration. Keep the wider variable type.
     const queryOptions = { maxWait: 5000, onauth: async (event: Parameters<typeof finalizeEvent>[0]) => finalizeEvent(event, this.sk) };
     const events = await this.pool.querySync(
-      this.config.relays,
+      this.readRelays(),
       // ponytail: one capped page (newest first). Under a sustained flood older real messages can be missed;
       // the remedy is rotating the agent key, the upgrade path an inbox relay that restricts who may write.
       { kinds: [KIND.GIFT_WRAP], "#p": [this.agentPub], since, limit: this.syncLimit },
@@ -666,7 +843,7 @@ export class Termnl {
   }
 
   close(): void {
-    this.pool.close(this.config.relays);
+    this.pool.close(this.readRelays());
     this.pool.destroy?.();
     this.sk.fill(0);
   }
@@ -706,7 +883,7 @@ export class Termnl {
     to: Contact,
     msg: { type: Envelope["type"]; body: unknown },
     id: string = randomUUID(),
-    extra: { group?: GroupInfo; re?: string } = {},
+    extra: { group?: GroupInfo; re?: string; keep_until?: number } = {},
   ): Promise<void> {
     if (!certValid(this.agent.cert, this.config.identity, this.agentPub)) {
       throw new Error("This agent key has expired. The owner must run: termnl rotate");
@@ -717,7 +894,7 @@ export class Termnl {
       onauth: async (event) => finalizeEvent(event, this.sk), maxWait: 10000,
     }));
     const ok = results.filter((r) => r.status === "fulfilled").length;
-    if (ok === 0) throw new Error(`None of the contact's ${to.relays.length} relay(s) accepted the message`);
+    if (ok === 0) throw new NoRelayError(`None of the contact's ${to.relays.length} relay(s) accepted the message`);
     this.log("out", to.agent, env.type, env.id, `${ok}/${to.relays.length} relays`);
   }
 
@@ -752,7 +929,7 @@ export class Termnl {
         this.saveContact({ ...contact, pending: undefined, relays: env.body.relays, name: contact.name ?? env.body.name });
         return true;
       case "request": {
-        const ok = this.onRequest(contact, env.id, env.body, env.group, env.re);
+        const ok = this.onRequest(contact, env.id, env.body, env.group, env.re, env.keep_until);
         if (ok) await this.sendReceipt(contact, env.id, "delivered");
         return ok;
       }
@@ -769,7 +946,7 @@ export class Termnl {
     const invites = this.store.read<InviteRecord[]>("invites.json", []);
     const inv = invites.find((i) => i.code === body.code);
     if (!inv || inv.used || inv.expires < now()) return false;
-    if (!certValid(body.cert, body.identity, sender)) return false;
+    if (!certValid(body.cert, body.identity, sender) || this.blocked().includes(body.identity)) return false;
     const contact = this.saveContact({
       identity: body.identity,
       agent: sender,
@@ -843,7 +1020,7 @@ export class Termnl {
     }
   }
 
-  private onRequest(contact: Contact, id: string, body: RequestBody, group?: GroupInfo, re?: string): boolean {
+  private onRequest(contact: Contact, id: string, body: RequestBody, group?: GroupInfo, re?: string, keepUntil?: number): boolean {
     const inbox = this.inbox();
     // Keep record-level idempotency even after the bounded seen cache expires.
     if (inbox.some(item => item.id === id)) return false;
@@ -859,6 +1036,7 @@ export class Termnl {
       authority: autoAcceptable(body, m.autoAccept) ? "auto" : "needs_owner",
       status: "open",
       group,
+      keep_until: keepUntil,
       // Keep the pointer only when it names something we really exchanged with this contact.
       re: re && (this.outbox().some((o) => o.id === re && o.to === contact.identity) || inbox.some((i) => i.id === re && i.from === contact.identity)) ? re : undefined,
     });
