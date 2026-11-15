@@ -101,7 +101,7 @@ export interface InboxItem {
    * Set when this did not come over Termnl at all: it is an email filed here from the owner's own mailbox.
    * `from` is then "email:<address>". Nothing about it is authenticated, and it can never become an agreement.
    */
-  email?: { address: string; name?: string; message_id: string };
+  email?: { address: string; name?: string; message_id: string; sent_at?: number };
 }
 
 export interface OutboxItem {
@@ -628,7 +628,7 @@ export class Termnl {
    * email once. It is information only: the address is whatever the email claimed, so nothing here is proof
    * of who wrote it, and it cannot be accepted into a signed agreement or answered over Termnl.
    */
-  addEmail(mail: { from: string; name?: string; subject: string; text?: string; messageId: string }): InboxItem | undefined {
+  addEmail(mail: { from: string; name?: string; subject: string; text?: string; messageId: string; sentAt?: number }): InboxItem | undefined {
     const address = mail.from.trim().toLowerCase();
     if (!/^[^\s@<>"]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(address) || address.length > 200) throw new Error("Not an email address");
     if (!mail.messageId.trim() || mail.messageId.length > 500) throw new Error("An email needs its message id, so it is filed only once");
@@ -652,7 +652,7 @@ export class Termnl {
       received_at: now(),
       authority: "needs_owner",
       status: "open",
-      email: { address, name: mail.name?.replace(/\p{Cc}/gu, " ").trim().slice(0, 80) || undefined, message_id: mail.messageId.trim() },
+      email: { address, name: mail.name?.replace(/\p{Cc}/gu, " ").trim().slice(0, 80) || undefined, message_id: mail.messageId.trim(), sent_at: Number.isFinite(mail.sentAt) ? mail.sentAt : undefined },
     };
     this.store.write("inbox.json", [...inbox, item]);
     this.log("in", from, "email", id);
