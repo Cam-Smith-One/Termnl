@@ -6,6 +6,8 @@ import { serveRelay, type RelayEvent, type RelayStore } from "@/lib/relay"
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const maxDuration = 60
+// Run next to the database (Sydney). From the default US region every query cost about 0.8 s, and a delivery makes several.
+export const preferredRegion = "syd1"
 
 const TABLE = "termnl_relay_events"
 const PER_RECIPIENT_PER_DAY = 500, GLOBAL_PER_HOUR = 5000, KEEP_DAYS = 30
@@ -23,8 +25,9 @@ function supabaseStore(): RelayStore {
   }
   return {
     async put(p, event) {
-      if (await count(ago(86400_000), p) >= PER_RECIPIENT_PER_DAY) throw new Error("rate-limited: this recipient's inbox is full for today")
-      if (await count(ago(3600_000)) >= GLOBAL_PER_HOUR) throw new Error("rate-limited: the relay is busy, try again later")
+      const [forThem, forAll] = await Promise.all([count(ago(86400_000), p), count(ago(3600_000))])
+      if (forThem >= PER_RECIPIENT_PER_DAY) throw new Error("rate-limited: this recipient's inbox is full for today")
+      if (forAll >= GLOBAL_PER_HOUR) throw new Error("rate-limited: the relay is busy, try again later")
       const { error } = await db.from(TABLE).upsert({ id: event.id, p, created_at: event.created_at, event }, { onConflict: "id", ignoreDuplicates: true })
       if (error) throw new Error("error: relay storage is not available")
       if (Math.random() < 0.02) await db.from(TABLE).delete().lt("stored_at", ago(KEEP_DAYS * 86400_000))

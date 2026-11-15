@@ -40,6 +40,7 @@ const HELP = `termnl <command>
   relays [wss://... ...]                                    read the relay list, or replace it and tell your contacts
   relays check | find | heal | auto <on|off>               test your relays; list working ones you could add; replace failing ones; do that automatically
   remove <contact> [--block] | unblock <npub> | blocked    stop hearing from a contact; --block also refuses new pairings with them
+  export <contact> <file>                                  write everything exchanged with one contact, and its signed agreements, to a file
   search <text>                                            find messages by subject, details, note or contact name
   retention <days|off>                                     remove answered messages from this device after that many days
   handle whois <name> | handle claim <name>                  optional termnl.app handle registry
@@ -149,6 +150,14 @@ async function main(): Promise<void> {
       case "unblock": mail.unblock(args[0] ?? ""); return out("Unblocked. Pair again to hear from them.");
       case "blocked": return out(mail.blocked().map((b) => npubEncode(b)));
       case "search": return out(mail.search(args.join(" ")));
+      case "export": {
+        if (!args[0] || !args[1]) throw new Error("export <contact> <new-file.json>");
+        const c = mail.resolveContact(args[0]);
+        // Everything held about one contact, with the signed agreements, for a record or a legal request.
+        const record = { exported_at: new Date().toISOString(), owner: mail.whoami().identity, contact: { name: c.name, npub: npubEncode(c.identity) }, messages: mail.conversation(args[0]), agreements: mail.commitments().filter((r) => r.with === c.identity) };
+        writeFileSync(args[1], JSON.stringify(record, null, 2), { mode: 0o600, flag: "wx" });
+        return out(`Wrote ${record.messages.length} messages and ${record.agreements.length} signed agreements with ${c.name ?? "this contact"} to ${args[1]}.`);
+      }
       case "retention": {
         if (args[0]) {
           const days = args[0] === "off" ? undefined : Number(args[0]);

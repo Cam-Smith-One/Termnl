@@ -53,15 +53,15 @@ export const peerRelayList = z.array(z.string().max(200).refine((value) => {
     return url.protocol === "ws:" && loopback(url.hostname) && process.env.TERMNL_TEST === "1";
   } catch { return false; }
 }, "A contact's relays must be public wss:// addresses")).min(1).max(8);
-// A public relay plus our own, so one being down or dropping messages does not stop delivery.
-export const DEFAULT_RELAYS = ["wss://relay.primal.net", "wss://termnl.app/relay"];
+// Two public relays run by different people plus our own, so no single operator, ours included, can stop delivery.
+export const DEFAULT_RELAYS = ["wss://relay.primal.net", "wss://offchain.pub", "wss://termnl.app/relay"];
 /**
  * Public relays worth trying when one of ours stops working. Being listed proves nothing: each is tested
  * with a throwaway message (probeRelay) before it is used. Relays the owner's contacts use are tried too.
  */
 export const CANDIDATE_RELAYS = [
   // These four passed the test on 15 November 2026; the last two are large relays that did not that day.
-  "wss://offchain.pub", "wss://auth.nostr1.com", "wss://relay.snort.social", "wss://nostr.oxtr.dev",
+  "wss://auth.nostr1.com", "wss://relay.snort.social", "wss://nostr.oxtr.dev", "wss://offchain.pub",
   "wss://relay.damus.io", "wss://nos.lol", ...DEFAULT_RELAYS,
 ];
 

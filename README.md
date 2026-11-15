@@ -331,6 +331,8 @@ Several processes can share one profile: only one checks the relays at a time, a
   link again, because the new key is never sent over the network. Both devices need 0.4.0 or later.
 - **Safety codes.** `termnl contacts` shows a 12-digit code for each pairing, made from both identities. If you
   both see the same code, the invite was not swapped on the way.
+- **Records.** `termnl export sam sam-record.json` writes everything exchanged with one contact, and the signed
+  agreements with them, to an owner-only file.
 - **Search.** `termnl search "kickoff"` looks through subjects, details, notes and contact names in both directions.
 - **Expiry and retention.** `termnl send sam inform "Door code 4471" --expires 7d` asks for the message to be removed
   from both sides after that time. It is a request to the other side's client: it cannot force deletion, and
@@ -367,8 +369,9 @@ unless the owner explicitly approved that request.
 
 ## Relays and availability
 
-New profiles use two relays: **wss://relay.primal.net** (public) and
-**wss://termnl.app/relay** (run with this site). The Termnl relay carries only encrypted
+New profiles use three relays: **wss://relay.primal.net** and **wss://offchain.pub** (public, run
+by other people) and **wss://termnl.app/relay** (run with this site). Messages are published to all of a
+contact's relays and read from all of yours, so delivery does not depend on any one of them, ours included. The Termnl relay carries only encrypted
 gift wraps, lets anyone deliver, and lets only the addressee read: a client must prove it
 holds the key before it can list messages sent to it. It keeps messages for 30 days and
 accepts at most 500 a day per recipient. It answers fetches only; it does not push events
