@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import "./ws";
 import { parseArgs } from "node:util";
-import { writeFileSync, unlinkSync, existsSync } from "node:fs";
+import { writeFileSync, unlinkSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { npubEncode } from "nostr-tools/nip19";
 import { Termnl } from "../lib/termnl/core";
@@ -46,6 +46,7 @@ const HELP = `termnl <command>
   rotate [--days 30]                                       issue a new agent key and notify contacts
   log [--last 50]                                          show recent activity
   backup <file>                                           owner-only plaintext-key backup (0600); keep offline
+  link <file> | restore <file>                            use this identity on a second computer: link here, move the file yourself, restore there
   lock                                                    close this CLI session; files remain on disk
   reset --confirm-profile-reset                           delete this local profile's known files
 
@@ -92,17 +93,31 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (cmd === "restore") {
+    const store = new FileStore();
+    if (store.has("config.json")) throw new Error(`There is already a profile in ${store.dir}. Use an empty TERMNL_HOME, or reset this one first.`);
+    const { files } = JSON.parse(readFileSync(args[0] ?? "", "utf8")) as { files: Record<string, unknown> };
+    // Scheduled messages stay on the device that queued them, or both would send them.
+    for (const name of PROFILE_FILES) if (name !== "scheduled.json" && files[name] != null) store.write(name, files[name], true);
+    const linked = new Termnl(store);
+    out(`Restored ${linked.whoami().name ?? "the profile"} to ${store.dir}.${linked.prefs().linked ? " It is linked: what you send, answer and pair on one device appears on the other." : ""}\nDelete ${args[0]} now: it holds your keys.`);
+    linked.close();
+    return;
+  }
+
   const mail = new Termnl(new FileStore());
   try {
     switch (cmd) {
       case "whoami":
         return out(mail.whoami());
       case "lock": return out("CLI session closed; the owner-only profile files remain on disk.");
-      case "backup": {
-        if (!args[0]) throw new Error("backup <new-file.json> — contains plaintext keys; keep offline");
+      case "backup": case "link": {
+        if (!args[0]) throw new Error(`${cmd} <new-file.json> — contains plaintext keys; keep offline`);
+        if (cmd === "link") mail.setPrefs({ linked: true });
         const names = PROFILE_FILES;
         const files = Object.fromEntries(names.filter(name => mail.store.has(name)).map(name => [name,mail.store.read(name,null)]));
         writeFileSync(args[0],JSON.stringify({version:1,files},null,2),{mode:0o600,flag:"wx"});
+        if (cmd === "link") return out(`This profile is now linked. Move ${args[0]} to your other computer yourself (not by chat, email or Git), run "termnl restore ${args[0]}" there, then delete the file on both. It contains plaintext keys.`);
         return out(`Wrote owner-only backup to ${args[0]}. It contains plaintext keys: store it offline, not in chat or Git.`);
       }
       case "reset": {
@@ -168,7 +183,7 @@ async function main(): Promise<void> {
         return out(`Pairing started with ${c.name ?? "(unnamed)"} ${npubEncode(c.identity)}. It is confirmed once they next check their inbox; you can send after that.`);
       }
       case "contacts":
-        return out(mail.contacts().map((c) => ({ name: c.name, npub: npubEncode(c.identity), relays: c.relays, ...(c.pending && { status: "waiting for them to confirm" }) })));
+        return out(mail.contacts().map((c) => ({ name: c.name, npub: npubEncode(c.identity), safety_code: mail.safetyCode(c.identity), relays: c.relays, ...(c.pending && { status: "waiting for them to confirm" }) })));
       case "sync":
         return out(await mail.sync());
       case "watch": {
@@ -242,6 +257,7 @@ async function main(): Promise<void> {
         throw new Error(`Unknown command "${cmd}"\n\n${HELP}`);
     }
   } finally {
+    await mail.idle();
     mail.close();
   }
 }

@@ -84,6 +84,8 @@ Each person decides what their agent may do on their behalf.
 | **Find and tidy** | Search everything you have exchanged. Ask for a message to be removed from both sides after a set time, and choose how long answered messages stay on your device. |
 | **Drop a contact** | Remove someone, or block them so they cannot pair with you again. They are not told. |
 | **Relays that look after themselves** | Termnl can test its relays, find working replacements and tell your contacts where to deliver. |
+| **Two computers, one identity** | Link a second computer. What you send, answer, pair and remove on one appears on the other. |
+| **Check who you paired with** | Each pairing has a short safety code both people can read to each other. |
 | **Hear about it straight away** | While your agent is open you get a desktop notification within seconds of a message arriving, without polling. |
 | **An inbox in Claude Code** | A panel beside your chat lists what people have sent you, with reply, forward and new message buttons. |
 | **See it as a card** | Chat apps that support MCP Apps show messages as a card with buttons; terminals get a tidy Markdown list; Claude Code has an inbox panel. |
@@ -146,7 +148,7 @@ service for people who work inside agents. Planned, not yet built:
 - **Hosted plugin.** A remote version for chat apps that cannot run a local plugin, without
   handing over keys (needs remote signing, NIP-46).
 - **Stronger group encryption.** MLS via the Marmot protocol, for forward secrecy and large groups.
-- **One identity everywhere.** The same identity across browser, laptop and phone.
+- **One identity everywhere.** Two computers can share an identity today. Next: the browser and a phone.
 - **Independent security audit** before any production use.
 
 ---
@@ -321,6 +323,14 @@ Several processes can share one profile: only one checks the relays at a time, a
   own copy with the team name. A team is local to you: nothing is shared except its name on those messages.
 - **Sending while offline.** If none of a contact's relays accepts a message, it is kept and tried again at every
   check for three days, then marked as not delivered. It keeps the same id, so it is never shown twice.
+- **A second computer.** `termnl link <file>` writes your profile to a file and marks it linked. Move the file
+  yourself, run `termnl restore <file>` in an empty profile on the other computer, then delete it: it holds your
+  keys in plain text. From then on each device sends the others a note, encrypted to your own agent key, about
+  what it sent, answered, paired, removed, or changed in the relay list. A note is believed only when it comes
+  from that key. Not shared: scheduled messages, teams, settings, and owner approvals. After `termnl rotate`,
+  link again, because the new key is never sent over the network. Both devices need 0.4.0 or later.
+- **Safety codes.** `termnl contacts` shows a 12-digit code for each pairing, made from both identities. If you
+  both see the same code, the invite was not swapped on the way.
 - **Search.** `termnl search "kickoff"` looks through subjects, details, notes and contact names in both directions.
 - **Expiry and retention.** `termnl send sam inform "Door code 4471" --expires 7d` asks for the message to be removed
   from both sides after that time. It is a request to the other side's client: it cannot force deletion, and
@@ -465,7 +475,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for a map of the code.
   expire events. Messages you send are queued and retried for three days; answers, receipts and
   countersignatures are not.
 - Event kinds 4270–4273 are provisional, not registered Nostr kinds.
-- Browser and local plugin profiles are separate for now.
+- Browser and local plugin profiles are separate for now. Linked computers share one agent key, so
+  losing either one means rotating the key and linking again.
 - Local file storage is not a hardened multi-process database. Relay checks are serialised by a lock,
   but other writes are not: stop the plugin for owner changes and restart it afterwards.
 - Rotation retires the old decryption key; finish pending exchanges before

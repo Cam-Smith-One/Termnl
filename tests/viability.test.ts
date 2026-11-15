@@ -3,7 +3,7 @@ import { useWebSocketImplementation as installWebSocket } from "nostr-tools/pool
 installWebSocket(WebSocket);
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { cpSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Termnl, probeRelay, type InboxItem } from "../lib/termnl/core";
@@ -131,4 +131,40 @@ test("a removed contact is ignored, and a blocked one cannot pair again until un
   await sam.acceptInvite(alex.createInvite());
   await alex.sync();
   assert.equal(alex.contacts().length, 1);
+});
+
+test("a second device linked to the same identity sees what the first sends, answers and removes", async () => {
+  sam.setPrefs({ linked: true });
+  const dir = mkdtempSync(join(tmpdir(), "termnl-sam2-"));
+  cpSync(sam.store.dir, dir, { recursive: true });
+  for (const name of ["device.json", "sync.lock"]) rmSync(join(dir, name), { recursive: true, force: true });
+  const laptop = new Termnl(new FileStore(dir));
+  try {
+    assert.equal(laptop.whoami().identity, sam.whoami().identity);
+
+    const sent = await sam.sendRequest("alex", { kind: "inform", subject: "Sent from the desktop" });
+    await sam.sync(); // its own note comes back and is ignored
+    assert.equal(sam.outbox().filter((o) => o.id === sent.id).length, 1);
+    await laptop.sync();
+    assert.ok(laptop.outbox().some((o) => o.id === sent.id));
+
+    const ask = await alex.sendRequest("sam", { kind: "request", subject: "Can you review the draft?" });
+    await sam.sync(); await laptop.sync();
+    await laptop.respond(ask.id, "decline", "Not this week");
+    await sam.sync();
+    assert.equal(sam.inbox().find((i) => i.id === ask.id)?.status, "declined");
+
+    // A stranger cannot pose as one of the owner's devices: the note must come from the profile's own key.
+    const forged = alex as unknown as { send: (to: unknown, msg: unknown) => Promise<void> };
+    await forged.send(contactOf(alex, sam), { type: "mirror", body: { what: "removed", device: crypto.randomUUID(), data: { identity: contactOf(sam, alex).identity } } });
+    await sam.sync();
+    assert.equal(sam.contacts().length, 1);
+
+    laptop.removeContact("alex");
+    await laptop.idle();
+    await sam.sync();
+    assert.equal(sam.contacts().length, 0);
+  } finally {
+    laptop.close();
+  }
 });

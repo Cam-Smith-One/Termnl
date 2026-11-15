@@ -119,6 +119,14 @@ export const envelope = z.discriminatedUnion("type", [
     type: z.literal("receipt"),
     body: z.object({ request_id: z.string().uuid(), state: z.enum(["delivered", "shown"]), note: z.string().max(200).optional() }),
   }),
+  /**
+   * A note from one of the owner's devices to the others, so they keep the same contacts and history.
+   * Believed only when it was sent by this profile's own agent key.
+   */
+  z.object({
+    type: z.literal("mirror"),
+    body: z.object({ what: z.enum(["outbox", "answered", "contact", "removed", "relays"]), device: z.string().uuid(), data: z.unknown() }),
+  }),
 ]).and(
   z.object({
     v: z.literal(1),

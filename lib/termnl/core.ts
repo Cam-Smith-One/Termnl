@@ -96,6 +96,8 @@ export interface Prefs {
   /** The owner lets Termnl replace a relay that stops working, once a day at most, and tell contacts. */
   autoRelays?: boolean;
   lastRelayCheck?: number;
+  /** This profile also runs on another device: tell the others what this one sends, answers and pairs. */
+  linked?: boolean;
 }
 
 /** A message queued for later. Always sent as the agent, so the mandate is checked again when it falls due. */
@@ -359,6 +361,7 @@ export class Termnl {
   }
   /** Change relays and tell every confirmed contact, signed by this agent key, so they deliver to the new ones. */
   async changeRelays(value: string[]): Promise<{ relays: string[]; notified: number }> {
+    await this.mirror("relays", relayList.parse(value)); // sent to the old relays, where the other devices still listen
     const relays = this.setRelays(value);
     let notified = 0;
     for (const c of this.contacts().filter((x) => !x.pending)) {
@@ -399,7 +402,7 @@ export class Termnl {
     return this.store.read<string[]>("blocked.json", []);
   }
   /** Owner only. Their messages are ignored from now on; nothing is sent to tell them. History is kept. */
-  removeContact(ref: string, opts: { block?: boolean } = {}): Contact {
+  removeContact(ref: string, opts: { block?: boolean; quiet?: boolean } = {}): Contact {
     const c = this.resolveContact(ref);
     this.store.write("contacts.json", this.contacts().filter((x) => x.identity !== c.identity));
     if (this.teams().length) this.store.write("teams.json", this.teams().map((t) => ({ ...t, members: t.members.filter((m) => m !== c.identity) })).filter((t) => t.members.length));
@@ -407,6 +410,7 @@ export class Termnl {
     // Blocking also refuses any later invite from, or to, the same identity.
     if (opts.block) this.store.write("blocked.json", [...new Set([...this.blocked(), c.identity])]);
     this.log("owner", c.agent, opts.block ? "block" : "remove", c.identity);
+    if (!opts.quiet) this.later(this.mirror("removed", { identity: c.identity, block: !!opts.block }));
     return c;
   }
   unblock(ref: string): boolean {
@@ -414,6 +418,71 @@ export class Termnl {
     this.store.write("blocked.json", this.blocked().filter((b) => b !== id));
     return true;
   }
+  /**
+   * A short code both people see for their pairing. Read it to each other over a call: if it matches,
+   * the invite was not swapped on the way.
+   */
+  safetyCode(ref: string): string {
+    const pair = [this.config.identity, this.resolveContact(ref).identity].sort().join(":");
+    const n = parseInt(sha256hex(`termnl-safety:${pair}`).slice(0, 13), 16) % 1e12;
+    return String(n).padStart(12, "0").replace(/(\d{4})(?=\d)/g, "$1 ");
+  }
+
+  // ---------- one identity on several devices ----------
+
+  private background = new Set<Promise<void>>();
+  private later(work: Promise<void>): void {
+    this.background.add(work);
+    void work.finally(() => this.background.delete(work));
+  }
+  /** Wait for notes to the owner's other devices to go out. Call before closing a short-lived process. */
+  async idle(): Promise<void> {
+    await Promise.all(this.background);
+  }
+  private device(): string {
+    let id = this.store.read<string | null>("device.json", null);
+    if (!id) this.store.write("device.json", (id = randomUUID()));
+    return id;
+  }
+  /** Tell this profile's other devices about something done here. Best effort, and nothing is sent unless linked. */
+  private async mirror(what: "outbox" | "answered" | "contact" | "removed" | "relays", data: unknown): Promise<void> {
+    if (!this.prefs().linked) return;
+    try {
+      await this.send({ agent: this.agentPub, relays: this.config.relays } as Contact, { type: "mirror", body: { what, device: this.device(), data } });
+    } catch { /* the other device catches up from the relays when it can */ }
+  }
+  /** Apply a note from another of the owner's devices. Existing records are never overwritten by an older copy. */
+  private onMirror(body: Extract<Envelope, { type: "mirror" }>["body"]): boolean {
+    if (!this.prefs().linked || body.device === this.device()) return false;
+    // Written by this same profile on another device, so it is trusted like a local file.
+    const d = body.data as { id?: string; status: InboxItem["status"]; record?: CommitmentRecord; identity: string; block?: boolean } & Contact & OutboxItem & string[];
+    switch (body.what) {
+      case "outbox": {
+        const all = this.outbox();
+        if (typeof d?.id !== "string" || all.some((o) => o.id === d.id)) return false;
+        this.store.write("outbox.json", [...all, d]);
+        return true;
+      }
+      case "answered": {
+        const inbox = this.inbox(), item = inbox.find((i) => i.id === d?.id);
+        if (!item || item.status !== "open") return false;
+        item.status = d.status;
+        this.store.write("inbox.json", inbox);
+        if (d.record && !this.commitments().some((r) => r.request_id === d.id && r.role === "responder")) this.store.write("commitments.json", [...this.commitments(), d.record]);
+        return true;
+      }
+      case "contact":
+        this.saveContact(d, true);
+        return true;
+      case "removed":
+        this.removeContact(d.identity, { block: d.block, quiet: true });
+        return true;
+      case "relays":
+        this.setRelays(d);
+        return true;
+    }
+  }
+
   /** Messages in either direction whose subject, details, note or contact name contain the text. Newest first. */
   search(text: string): { dir: "in" | "out"; at: number; item: InboxItem | OutboxItem }[] {
     const q = text.trim().toLowerCase();
@@ -602,6 +671,7 @@ export class Termnl {
     // Hidden recipients send nothing extra, so a receiver cannot even tell it went to others (see sendItem).
     try {
       await this.sendItem(contact, item);
+      await this.mirror("outbox", item);
     } catch (e) {
       // Offline, or their relays are down: keep it and try again at every check, rather than lose it.
       if (!(e instanceof NoRelayError)) throw e;
@@ -630,6 +700,7 @@ export class Termnl {
       try {
         if (!contact) throw new Error("no longer a contact");
         await this.sendItem(contact, q);
+        await this.mirror("outbox", { ...q, unsent: undefined });
         state = undefined;
       } catch (e) {
         if (!(e instanceof NoRelayError) || q.sent_at < now() - RETRY_DAYS * DAY) state = "failed";
@@ -710,6 +781,7 @@ export class Termnl {
     await this.send(contact, { type: "response", body: { request_id: requestId, decision, note, commitment } });
     item.status = decision === "accept" ? "accepted" : decision === "decline" ? "declined" : "countered";
     this.store.write("inbox.json", inbox);
+    await this.mirror("answered", { id: item.id, status: item.status, record: commitment && this.commitments().find((r) => r.request_id === item.id && r.role === "responder") });
     return item;
   }
 
@@ -826,7 +898,7 @@ export class Termnl {
       try {
         const ok = await this.handle(sender, env);
         // A receipt is bookkeeping, not something new for the owner, so it is not counted as processed.
-        if (env.type !== "receipt" || !ok) ok ? processed++ : dropped++;
+        if ((env.type !== "receipt" && env.type !== "mirror") || !ok) ok ? processed++ : dropped++;
         // Only paired contacts reach the log, so a stranger cannot flood it or push out real history.
         if (ok || isContact(sender)) this.log("in", sender, ok ? env.type : `dropped:${env.type}`, env.id);
       } catch (e) {
@@ -858,7 +930,7 @@ export class Termnl {
     return sha256hex(canonical({ id, from, to, body }));
   }
 
-  private saveContact(c: Contact): Contact {
+  private saveContact(c: Contact, quiet = false): Contact {
     const known = this.contacts();
     // Pairing must never undo a rotation: an older certificate may belong to a retired, stolen key.
     const existing = known.find((x) => x.identity === c.identity);
@@ -872,6 +944,7 @@ export class Termnl {
     const all = known.filter((x) => x.identity !== c.identity);
     all.push(c);
     this.store.write("contacts.json", all);
+    if (!quiet) this.later(this.mirror("contact", c));
     return c;
   }
 
@@ -913,6 +986,8 @@ export class Termnl {
 
   /** Apply one authenticated envelope. Returns false when it is ignored. */
   private async handle(sender: string, env: Envelope): Promise<boolean> {
+    // Only this profile's own key can speak for its other devices.
+    if (env.type === "mirror") return sender === this.agentPub && this.onMirror(env.body);
     if (env.type === "knock") return this.onKnock(sender, env.body);
     if (env.type === "cert_update") return this.onCertUpdate(sender, env.body.cert);
 
