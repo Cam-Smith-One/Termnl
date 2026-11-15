@@ -242,7 +242,7 @@ export default function ConsolePage() {
       if (cmd === "mandate") { const json = line.trim().slice(cmd.length).trim(); write(json ? mail.setMandate(JSON.parse(json)) : mail.mandate()); return }
       const { args, flags } = options(commandWords(line).slice(1), ["block"])
       // Names, subjects, details and notes come from the other party: always written with kind "peer".
-      const who = (identity: string) => `"${mail.contacts().find(contact => contact.identity === identity)?.name ?? "(no name)"}"`
+      const who = (identity: string) => `"${mail.contacts().find(contact => contact.identity === identity)?.name ?? (identity.startsWith("email:") ? `${identity.slice(6)} (by email, sender not verified)` : "(no name)")}"`
       const terms = (body: RequestBody) => [`Subject: ${body.subject}`, body.details && `Details: ${body.details}`, body.value && `Value: ${body.value.amount} ${body.value.currency}`, body.due && `Due: ${body.due}`].filter(Boolean).join("\n")
       const sync = async () => {
         const confirmed = () => mail.contacts().filter(contact => !contact.pending)
@@ -304,7 +304,7 @@ export default function ConsolePage() {
         case "approve": { const item = mail.approve(args[0] || ""); write("Approved. Nothing is signed until you accept it.", "status"); showInbox(item); break }
         case "accept": case "decline": case "counter": {
           const item = await mail.respond(args[0] || "", cmd, args.slice(1).join(" ") || undefined)
-          write(`${cmd === "accept" ? "Accepted" : cmd === "decline" ? "Declined" : "Countered"} the ${item.body.kind} from ${who(item.from)}.${cmd === "accept" ? " You signed the terms; see Agreements for their countersignature." : ""}`, "peer"); break
+          write(`${cmd === "accept" ? "Accepted" : cmd === "decline" ? "Declined" : "Countered"} the ${item.body.kind} from ${who(item.from)}.${cmd === "accept" && !item.email ? " You signed the terms; see Agreements for their countersignature." : ""}`, "peer"); break
         }
         case "send": {
           const [to, kind, subject] = args
@@ -393,7 +393,7 @@ export default function ConsolePage() {
   const creating = adding || !profiles.length
   const mail = active ? session.current?.mail : undefined
   const contacts = mail?.contacts() ?? []
-  const nameOf = (identity: string) => contacts.find(contact => contact.identity === identity)?.name
+  const nameOf = (identity: string) => contacts.find(contact => contact.identity === identity)?.name ?? (identity.startsWith("email:") ? `${identity.slice(6)} (by email, sender not verified)` : undefined)
   const matches = (contact: (typeof contacts)[number]) => !find.trim() || `${contact.name ?? ""} ${npubEncode(contact.identity)}`.toLowerCase().includes(find.trim().toLowerCase())
   const inboxItems = mail?.inbox().slice().reverse() ?? []
   const openItems = inboxItems.filter(item => item.status === "open"), answered = inboxItems.filter(item => item.status !== "open")

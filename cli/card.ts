@@ -115,6 +115,7 @@ body[data-standalone]{max-width:880px;margin:auto;padding:20px}
     if (re) more.appendChild(el("div", "said", "In reply to: " + re));
     var team = sent ? item.team : item.untrusted_team_name;
     if (team) more.appendChild(el("div", "said", (sent ? "Sent to your team: " : "Sent to their team: ") + team));
+    if (item.channel) more.appendChild(el("div", "note", "By email. Sender not verified: " + ((party && party.email) || "")));
     var gone = sent ? item.removed_from_both_sides_at : item.sender_asked_to_remove_at;
     if (gone) more.appendChild(el("div", "said", "Removed from both sides " + when(gone)));
     if (sent && item.delivery) more.appendChild(el("div", "note", item.delivery.indexOf("not sent") === 0 ? "Not sent yet. Termnl keeps trying." : "Could not be delivered."));
@@ -131,12 +132,12 @@ body[data-standalone]{max-width:880px;margin:auto;padding:20px}
     }
     (u.attachments || []).forEach(function(f){ more.appendChild(el("span", "file", "📎 " + f.name + " · " + size(f.bytes))); });
     var owner = String(item.authority).indexOf("needs_owner") === 0;
-    if (isNew && owner) more.appendChild(el("div", "note", "Outside your agent's limits. Only you can approve it, in a terminal: termnl approve " + item.id));
+    if (isNew && owner && !item.channel) more.appendChild(el("div", "note", "Outside your agent's limits. Only you can approve it, in a terminal: termnl approve " + item.id));
     var acts = el("div", "acts");
     function btn(label, cls, verb, final){ var b = el("button", cls, label); b.type = "button"; b.onclick = function(){ say(verb + " Termnl request " + item.id, acts, final); }; acts.appendChild(b); }
-    if (isNew && !owner) btn(item.kind === "inform" ? "Acknowledge" : "Accept", "go", "Accept", true);
-    if (isNew) btn("Decline", "no", "Decline", true);
-    if (isNew) btn("Suggest a change", "", "I want to suggest a change to");
+    if (isNew && (!owner || item.channel)) btn(item.kind === "inform" ? "Acknowledge" : "Accept", "go", "Accept", true);
+    if (isNew && !item.channel) btn("Decline", "no", "Decline", true);
+    if (isNew && !item.channel) btn("Suggest a change", "", "I want to suggest a change to");
     btn(sent ? "Follow up" : "Reply", isNew ? "" : "go", sent ? "I want to send a follow-up to" : "I want to reply to");
     btn("Forward", "", "I want to forward");
     if (!sent && (u.attachments || []).length) btn("Save files", "", "Save the attachments from");

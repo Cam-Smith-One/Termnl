@@ -58,6 +58,7 @@ Each person decides what their agent may do on their behalf.
 - Reference: [browser console](#try-it-by-hand-in-the-browser) ·
   [CLI and agent plugin](#local-cli-and-agent-plugin) ·
   [authority and messages](#authority-and-messages) ·
+  [email](#email-beside-your-messages) ·
   [forward secrecy](#forward-secrecy) ·
   [relays](#relays-and-availability) ·
   [attachments](#encrypted-attachments) ·
@@ -87,6 +88,7 @@ Each person decides what their agent may do on their behalf.
 | **Relays that look after themselves** | Termnl can test its relays, find working replacements and tell your contacts where to deliver. |
 | **Two computers, one identity** | Link a second computer. What you send, answer, pair and remove on one appears on the other. |
 | **Check who you paired with** | Each pairing has a short safety code both people can read to each other. |
+| **Email in the same place** | Choose which email senders matter. Your agent files their mail beside your Termnl messages, from your own mailbox, with no server in between. |
 | **Forward secrecy** | Messages are encrypted to a key that exists for one day and is deleted about a week later, so a key stolen afterwards cannot open them. |
 | **Hear about it straight away** | While your agent is open you get a desktop notification within seconds of a message arriving, without polling. |
 | **An inbox in Claude Code** | A panel beside your chat lists what people have sent you, with reply, forward and new message buttons. |
@@ -254,9 +256,9 @@ profile before starting the client. Use `TERMNL_HOME` in the client's server
 environment for a non-default profile. Restart the plugin after a key rotation
 or a relay change made from the CLI.
 
-The seventeen agent tools are `whoami`, `list_contacts`, `check_inbox`, `send_request`, `respond`,
+The eighteen agent tools are `whoami`, `list_contacts`, `check_inbox`, `send_request`, `respond`,
 `save_attachments`, `list_outbox`, `list_commitments`, `get_log`, `inbox_check_interval`, `conversation`,
-`catch_up`, `search`, `scheduled`, `set_status`, `teams` and `pairing`. `pairing` is refused unless the owner sets
+`catch_up`, `search`, `add_email`, `scheduled`, `set_status`, `teams` and `pairing`. `pairing` is refused unless the owner sets
 `"agentMayPair": true` in the mandate. **Owner approval, mandate editing, key rotation, removing or
 blocking a contact, relay changes and handle claims are not MCP tools.**
 The CLI owner performs those actions out of band. A local agent with unrestricted
@@ -374,6 +376,28 @@ Older clients ignore the list. The browser console sends to one contact at a tim
 `mandate <JSON>` in the browser replaces them as an owner action. Changes do not
 turn peer text into authority. Agent acceptance re-checks the current mandate
 unless the owner explicitly approved that request.
+
+## Email beside your messages
+
+Other people will keep using email. Termnl can show the email you choose in the same list as your Termnl
+messages, without becoming a mail server.
+
+1. You approve senders: `termnl email allow sam@example.com`, or `termnl email allow @example.com` for everyone
+   at one domain. `termnl email` lists them and `termnl email remove ...` takes one off. Only you can change the
+   list; the agent cannot.
+2. Your agent reads your own mailbox with the email connector you already gave it (Gmail, Outlook or another),
+   and files mail from those senders with the `add_email` tool. Mail from anyone else is refused.
+3. It appears as a card marked "By email. Sender not verified", and in search and catch-up like anything else.
+
+What this is and is not:
+
+- **No Termnl server sees your email.** It goes from your mail provider to your agent to a file on your machine.
+- **An email is information only.** It cannot be approved, countered or accepted into a signed agreement, and
+  acknowledging it only marks it done. To answer, your agent drafts an email reply for you to approve.
+- **The sender is not verified.** A From address can be forged, and Termnl takes the agent's word for what the
+  email said. Treat an email card as you would the email itself.
+- **It arrives when your agent looks.** There is no push: email is filed when you ask what is waiting.
+- **Each email is filed once,** identified by its message id. Linked devices each file their own copy.
 
 ## Forward secrecy
 

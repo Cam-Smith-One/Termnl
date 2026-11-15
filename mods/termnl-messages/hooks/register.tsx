@@ -58,12 +58,13 @@ const load = async ($: EngineInterface) => {
       m.group?.name ? `${who === 'to' ? 'Sent to your team' : 'Sent to their team'}: ${m.group.name}` : '',
       m.receipt?.shown_at ? `Shown to them ${time(m.receipt.shown_at)}` : m.receipt?.delivered_at ? `Delivered ${time(m.receipt.delivered_at)}` : '',
       m.receipt?.note ? `Their status: ${m.receipt.note}` : '',
+      m.email ? `By email. Sender not verified: ${m.email.address}` : '',
       m.keep_until ? `Removed from both sides ${time(m.keep_until)}` : '',
       m.unsent === 'queued' ? 'Not sent yet. Termnl keeps trying.' : m.unsent === 'failed' ? 'Could not be delivered.' : '',
     ].filter(Boolean)
     const shape = (who: 'from' | 'to', at: 'received_at' | 'sent_at') => async (m: any): Promise<Message> => ({
       id: String(m.id),
-      name: names.get(m[who]) ?? 'Unknown contact',
+      name: names.get(m[who]) ?? (m.email ? String(m.email.name ?? m.email.address) : 'Unknown contact'),
       kind: String(m.body?.kind ?? ''),
       subject: String(m.body?.subject ?? ''),
       details: String(m.body?.details ?? ''),

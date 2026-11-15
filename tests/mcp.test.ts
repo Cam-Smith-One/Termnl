@@ -9,7 +9,7 @@ import {Termnl} from "../lib/termnl/core"
 import {FileStore} from "../cli/store"
 import {WebSocketServer} from "ws"
 
-test("MCP exposes seventeen limited tools; authority-granting actions are absent or refused by default",async()=>{
+test("MCP exposes eighteen limited tools; authority-granting actions are absent or refused by default",async()=>{
  const dir=mkdtempSync(join(tmpdir(),"termnl-mcp-"))
  const mail=Termnl.init(new FileStore(dir),{name:"mcp-test",relays:["wss://relay.damus.io"]});mail.close()
  const transport=new StdioClientTransport({command:process.execPath,args:[join(process.cwd(),"dist-cli/mcp.mjs")],env:{PATH:process.env.PATH||"",TERMNL_HOME:dir}})
@@ -17,7 +17,7 @@ test("MCP exposes seventeen limited tools; authority-granting actions are absent
  try {
   await client.connect(transport)
   const tools=await client.listTools()
-  assert.deepEqual(tools.tools.map(tool=>tool.name).sort(),["whoami","list_contacts","check_inbox","send_request","respond","list_outbox","list_commitments","get_log","inbox_check_interval","save_attachments","conversation","catch_up","scheduled","set_status","teams","pairing","search"].sort())
+  assert.deepEqual(tools.tools.map(tool=>tool.name).sort(),["whoami","list_contacts","check_inbox","send_request","respond","list_outbox","list_commitments","get_log","inbox_check_interval","save_attachments","conversation","catch_up","scheduled","set_status","teams","pairing","search","add_email"].sort())
   // Pairing stays the owner's unless they switch it on in the mandate.
   const noPair=await client.callTool({name:"pairing",arguments:{action:"invite"}})
   assert.equal(noPair.isError,true); assert.match(JSON.stringify(noPair.content),/agentMayPair/)

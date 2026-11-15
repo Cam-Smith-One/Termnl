@@ -41,6 +41,7 @@ const HELP = `termnl <command>
   relays check | find | heal | auto <on|off>               test your relays; list working ones you could add; replace failing ones; do that automatically
   remove <contact> [--block] | unblock <npub> | blocked    stop hearing from a contact; --block also refuses new pairings with them
   export <contact> <file>                                  write everything exchanged with one contact, and its signed agreements, to a file
+  email | email allow|remove <address|@domain>             choose whose email your agent may file beside your Termnl messages
   forward-secrecy [on|off]                                 daily inbox keys, deleted about a week later (on by default)
   search <text>                                            find messages by subject, details, note or contact name
   retention <days|off>                                     remove answered messages from this device after that many days
@@ -151,6 +152,13 @@ async function main(): Promise<void> {
       case "unblock": mail.unblock(args[0] ?? ""); return out("Unblocked. Pair again to hear from them.");
       case "blocked": return out(mail.blocked().map((b) => npubEncode(b)));
       case "search": return out(mail.search(args.join(" ")));
+      case "email": {
+        // Email senders allowed into the same inbox. Reading the mailbox is the agent's job, through its own email connector.
+        if (args[0] === "allow" || args[0] === "remove") mail.setEmailSender(args[1] ?? "", args[0] === "allow");
+        else if (args.length) throw new Error("email | email allow <address|@domain> | email remove <address|@domain>");
+        const list = mail.emailSenders();
+        return out(list.length ? `Email from these senders can appear beside your Termnl messages:\n${list.join("\n")}` : "No email senders are allowed. Add one with: termnl email allow sam@example.com");
+      }
       case "forward-secrecy":
         if (args[0] === "on" || args[0] === "off") mail.setPrefs({ forwardSecrecy: args[0] === "on" });
         return out(`Forward secrecy is ${mail.whoami().forward_secrecy}`);
@@ -200,7 +208,7 @@ async function main(): Promise<void> {
       case "sync":
         return out(await mail.sync());
       case "watch": {
-        const nameOf = (identity: string) => mail.contacts().find((c) => c.identity === identity)?.name ?? "A contact";
+        const nameOf = (identity: string) => mail.contacts().find((c) => c.identity === identity)?.name ?? (identity.startsWith("email:") ? identity.slice(6) : "A contact");
         mail.watch((news) => {
           for (const n of describe(news, nameOf)) { console.log(`${new Date().toLocaleTimeString()}  ${n.title}: ${n.body}`); if (!mail.status()) notify(n.title, n.body); }
         }, { fallbackMinutes: Number(values.minutes ?? 15) });

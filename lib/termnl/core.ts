@@ -97,6 +97,11 @@ export interface InboxItem {
   receipted?: "delivered" | "shown";
   /** The sender asked for it to be removed at this time. */
   keep_until?: number;
+  /**
+   * Set when this did not come over Termnl at all: it is an email filed here from the owner's own mailbox.
+   * `from` is then "email:<address>". Nothing about it is authenticated, and it can never become an agreement.
+   */
+  email?: { address: string; name?: string; message_id: string };
 }
 
 export interface OutboxItem {
@@ -134,6 +139,8 @@ export interface Prefs {
   linked?: boolean;
   /** False switches daily inbox keys off: this profile neither offers them nor uses a contact's. */
   forwardSecrecy?: boolean;
+  /** Email senders the owner lets into the same inbox: full addresses, or "@domain" for everyone at one. */
+  emailSenders?: string[];
 }
 
 /** A message queued for later. Always sent as the agent, so the mandate is checked again when it falls due. */
@@ -354,6 +361,7 @@ export class Termnl {
     const item = inbox.find((i) => i.id === requestId);
     if (!item) throw new Error(`No inbound request ${requestId}`);
     if (item.status !== "open") throw new Error("Only open requests can be approved");
+    if (item.email) throw new Error("This came by email, so there is nothing to approve. Acknowledge it or reply by email.");
     item.authority = "owner_approved";
     this.store.write("inbox.json", inbox);
     this.log("owner", item.from, "approve", requestId);
@@ -374,6 +382,7 @@ export class Termnl {
       agent_key: npubEncode(this.agentPub),
       agent_key_expires: new Date(exp * 1000).toISOString(),
       relays: this.config.relays,
+      email_senders: this.emailSenders(),
       forward_secrecy: this.inboxList() ? "on: messages to you use a key that is deleted about a week later" : "off",
       mandate: this.mandate(),
     };
@@ -601,15 +610,64 @@ export class Termnl {
     }
   }
 
+  // ---------- email, as a second way in ----------
+
+  emailSenders(): string[] {
+    return this.prefs().emailSenders ?? [];
+  }
+  /** Owner only: choose whose email may appear beside Termnl messages. An address, or "@domain". */
+  setEmailSender(sender: string, allow: boolean): string[] {
+    const s = sender.trim().toLowerCase();
+    if (!/^([^\s@<>"]+)?@[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(s) || s.length > 200) throw new Error('Give an address such as sam@example.com, or "@example.com" for everyone at that domain');
+    const next = [...new Set([...this.emailSenders().filter((x) => x !== s), ...(allow ? [s] : [])])];
+    if (next.length > 200) throw new Error("At most 200 email senders");
+    return this.setPrefs({ emailSenders: next }).emailSenders ?? [];
+  }
+  /**
+   * File an email from the owner's own mailbox as a message for them. Only approved senders get in, each
+   * email once. It is information only: the address is whatever the email claimed, so nothing here is proof
+   * of who wrote it, and it cannot be accepted into a signed agreement or answered over Termnl.
+   */
+  addEmail(mail: { from: string; name?: string; subject: string; text?: string; messageId: string }): InboxItem | undefined {
+    const address = mail.from.trim().toLowerCase();
+    if (!/^[^\s@<>"]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(address) || address.length > 200) throw new Error("Not an email address");
+    if (!mail.messageId.trim() || mail.messageId.length > 500) throw new Error("An email needs its message id, so it is filed only once");
+    const allowed = this.emailSenders();
+    if (!allowed.includes(address) && !allowed.includes(address.slice(address.indexOf("@")))) return undefined;
+    // The same email always gets the same id, whichever device or session files it.
+    const h = sha256hex(`termnl-email:${mail.messageId.trim()}`);
+    const id = `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
+    const inbox = this.inbox();
+    const from = `email:${address}`;
+    if (inbox.some((i) => i.id === id)) return undefined;
+    if (inbox.filter((i) => i.from === from && i.status === "open").length >= this.mandate().maxOpenPerContact) return undefined;
+    const clean = (v: string, max: number) => (v.length > max ? `${v.slice(0, max - 20)}\n[shortened]` : v);
+    const text = (mail.text ?? "").replace(/\r\n/g, "\n").trim();
+    const body = requestBody.parse({ kind: "inform", subject: clean(mail.subject.replace(/\p{Cc}/gu, " ").trim() || "(no subject)", 200), details: text ? clean(text, 4000) : undefined });
+    const item: InboxItem = {
+      id,
+      from,
+      body,
+      request_hash: this.requestHash(id, from, this.config.identity, body),
+      received_at: now(),
+      authority: "needs_owner",
+      status: "open",
+      email: { address, name: mail.name?.replace(/\p{Cc}/gu, " ").trim().slice(0, 80) || undefined, message_id: mail.messageId.trim() },
+    };
+    this.store.write("inbox.json", [...inbox, item]);
+    this.log("in", from, "email", id);
+    return item;
+  }
+
   /** Messages in either direction whose subject, details, note or contact name contain the text. Newest first. */
   search(text: string): { dir: "in" | "out"; at: number; item: InboxItem | OutboxItem }[] {
     const q = text.trim().toLowerCase();
     if (!q) return [];
     const names = new Map(this.contacts().map((c) => [c.identity, c.name ?? ""]));
     const hit = (who: string, body: RequestBody, note?: string) =>
-      [names.get(who), body.subject, body.details, note].some((v) => v?.toLowerCase().includes(q));
+      [names.get(who), who.startsWith("email:") ? who : "", body.subject, body.details, note].some((v) => v?.toLowerCase().includes(q));
     return [
-      ...this.inbox().filter((i) => hit(i.from, i.body)).map((item) => ({ dir: "in" as const, at: item.received_at, item })),
+      ...this.inbox().filter((i) => hit(i.from, i.body, i.email?.name)).map((item) => ({ dir: "in" as const, at: item.received_at, item })),
       ...this.outbox().filter((o) => hit(o.to, o.body, o.note)).map((item) => ({ dir: "out" as const, at: item.sent_at, item })),
     ].sort((a, b) => b.at - a.at).slice(0, 50);
   }
@@ -871,6 +929,13 @@ export class Termnl {
     const item = inbox.find((i) => i.id === requestId);
     if (!item) throw new Error(`No inbound request ${requestId}`);
     if (item.status !== "open") throw new Error(`Request ${requestId} is already ${item.status}`);
+    if (item.email) {
+      // An email is only ever marked as dealt with here. Nothing is signed and nothing is sent.
+      if (decision === "counter") throw new Error("This came by email. Reply to it by email; Termnl cannot answer it.");
+      item.status = decision === "accept" ? "accepted" : "declined";
+      this.store.write("inbox.json", inbox);
+      return item;
+    }
     const contact = this.resolveContact(item.from);
 
     let commitment: SignedEvent | undefined;
